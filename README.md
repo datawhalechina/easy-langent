@@ -18,10 +18,10 @@
 | [前言](./docs/前言.md)        | 前言与读者建议   | ✅    |
 | [第一章 LangChain与LangGraph框架认知](./docs/chapter1.md) |  框架介绍、环境安装、lang框架体验| ✅    |
 | <strong>第二部分：LangChain组件与实战</strong> |  |  |
-| [第二章  LangChain核心组件实操](./docs/chapter2.md) | 模型调用、提示词模板、输出解析 | ✅    |
-| [第三章  LangChain进阶组件实操](./docs/chapter3.md) | 记忆、工具、组合实践 | ✅    |
-| 第四章 LangChain Agent 基础实践 | 智能体定义、类型、范式与应用 | 🚧    |
-| 第五章 LangGraph基础：有状态工作流与核心概念实操  | 智能体定义、类型、范式与应用 | 🚧    |
+| [第二章 LangChain核心组件实操](./docs/chapter2.md) | 模型调用、提示词模板、输出解析 | ✅    |
+| [第三章 LangChain进阶组件实操](./docs/chapter3.md) | 记忆、工具、组合实践 | ✅    |
+| [第四章 LangChain应用级系统设计与RAG实践](./docs/chapter4.md) | 链式工作流、RAG实践 | 🚧    |
+| 第五章 LangGraph 核心原理与智能体基础构建  | 智能体定义、类型、范式与应用 | 🚧    |
 | 第六章 LangGraph进阶：多智能体协作与复杂流程管控  | 智能体定义、类型、范式与应用 | 🚧    |
 | 第七章 智能体构建核心要点：设计原则与优化策略     | 智能体定义、类型、范式与应用 | 🚧    |
 | 第八章 综合实战：从零构建可落地的智能体系统       | 智能体定义、类型、范式与应用 | 🚧    |
