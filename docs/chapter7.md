@@ -941,5 +941,710 @@ if __name__ == "__main__":
 
 当多智能体处理的任务越来越复杂（比如包含子任务、并行处理、循环重试），简单的“链式”“中心化”已经不够用了——这时候就需要LangGraph的高级管控技术，帮我们拆解复杂流程、提升效率、避免出错。
 
+### 7.2.1 子图（Subgraphs）机制：复杂系统的模块化拆解
 
+子图，顾名思义，就是“图中的图”——把一个复杂的流程，拆成多个独立的“子流程”（每个子流程就是一个子图），主图负责调用子图，子图负责处理具体的子任务。
+
+核心优势：实现“逻辑隔离”和“复用”——比如一个“文档处理”子图，可同时被“报告生成”“数据提取”两个主流程调用，不用重复开发。
+
+**什么是子图？**
+
+类比理解：子图就像“函数”——我们把一段常用的代码写成一个函数，后续需要用到时，直接调用这个函数，不用重复写代码；子图就是把一段常用的流程写成一个“子图”，主图需要时，直接调用这个子图。
+
+LangGraph中，子图的实现非常简单：先定义一个子图（StateGraph），编译后，作为一个“节点”，添加到主图中即可。
+
+#### 7.2.1.1 实操案例：在主流程中嵌入一个独立的子图
+
+案例演示：主图是模拟老师收卷子，子图用来批改和统计
+
+```python
+# 【教案实操案例】7.2.1.2 在主流程中嵌入独立可复用的“作业批改”子图
+# 核心需求（学生易理解）：
+# 主流程：接收学生作业 → 作业批改（子图，可复用） → 生成批改反馈
+# 子流程（作业批改子图）：检查完成度→检查正确率→计算得分（独立可复用）
+import os
+from dotenv import load_dotenv
+from langgraph.graph import StateGraph, END, START
+from typing import TypedDict, Optional  # 导入Optional，适配初始None值
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+from langchain_openai import ChatOpenAI
+
+# -------------------------- 全局初始化（与之前一致，保持教学统一）--------------------------
+load_dotenv()
+llm = ChatOpenAI(
+    api_key=os.getenv("API_KEY"),
+    base_url="https://api.deepseek.com",
+    model="deepseek-chat",
+    temperature=0.3  # 低温度保证输出固定，方便学生观察
+)
+output_parser = StrOutputParser()  # 统一解析为字符串，避免报错
+
+# -------------------------- 第一步：定义“作业批改子图”（独立、可复用）--------------------------
+# 子图独立状态：添加Optional，所有字段支持初始None/默认值
+class CorrectionSubgraphState(TypedDict):
+    homework_content: str                # 待批改作业（主图传递，必传）
+    completion: Optional[str] = None     # 完成度：完成/未完成（初始None）
+    accuracy: Optional[str] = None       # 正确率：正确率XX%（初始None）
+    score: Optional[int] = 0             # 最终得分（初始默认0分，避免类型错误）
+
+# 子图智能体（分工明确，LLM输出固定格式，无解析冗余）
+# 智能体1：检查作业完成度（仅输出「完成」/「未完成」）
+completion_check_prompt = ChatPromptTemplate.from_messages([
+    ("system", "你是作业完成度检查老师，仅输出「完成」或「未完成」，不添加任何额外文字！"),
+    ("user", "作业内容：{homework_content}，判断是否完成（有具体内容、无空白即为完成）")
+])
+completion_check_agent = completion_check_prompt | llm | output_parser
+
+# 智能体2：检查作业正确率（仅输出「正确率XX%」）
+accuracy_check_prompt = ChatPromptTemplate.from_messages([
+    ("system", "你是作业正确率检查老师，仅输出「正确率XX%」，不添加任何额外文字！"),
+    ("user", "作业内容：{homework_content}，假设是数学计算题，合理估算正确率")
+])
+accuracy_check_agent = accuracy_check_prompt | llm | output_parser
+
+# 智能体3：计算最终得分（仅输出0-100整数）
+score_calc_prompt = ChatPromptTemplate.from_messages([
+    ("system", "你是得分计算老师，仅输出0-100的整数，不添加任何额外文字！"),
+    ("user", "完成度：{completion}，正确率：{accuracy}，计分规则：完成得60基础分，正确率每10%加4分，未完成得0分")
+])
+score_calc_agent = score_calc_prompt | llm | output_parser
+
+# 子图节点函数（打印日志+更新状态，学生易观察）
+def check_completion_node(state: CorrectionSubgraphState) -> CorrectionSubgraphState:
+    """子图节点1：检查作业完成度"""
+    print(f"🔍 子图执行 - 检查作业完成度")
+    completion = completion_check_agent.invoke({"homework_content": state["homework_content"]})
+    # 修复解包顺序：先解包原状态，再更新新字段（统一规范）
+    return {**state, "completion": completion}
+
+def check_accuracy_node(state: CorrectionSubgraphState) -> CorrectionSubgraphState:
+    """子图节点2：检查作业正确率"""
+    print(f"🔍 子图执行 - 检查作业正确率")
+    accuracy = accuracy_check_agent.invoke({"homework_content": state["homework_content"]})
+    return {**state, "accuracy": accuracy}
+
+def calc_score_node(state: CorrectionSubgraphState) -> CorrectionSubgraphState:
+    """子图节点3：计算最终得分"""
+    print(f"🔍 子图执行 - 计算作业得分")
+    # 子图内部空值校验：避免LLM输出异常导致报错
+    completion = state["completion"] or "未完成"
+    accuracy = state["accuracy"] or "正确率0%"
+    # 调用得分智能体并转整数（增加异常捕获，适配LLM偶尔输出非数字的情况）
+    try:
+        score = int(score_calc_agent.invoke({"completion": completion, "accuracy": accuracy}))
+    except:
+        score = 0
+    return {**state, "score": score}
+
+# 构建并编译子图（独立流程，可复用）
+correction_subgraph = StateGraph(CorrectionSubgraphState)
+correction_subgraph.add_node("check_completion", check_completion_node)
+correction_subgraph.add_node("check_accuracy", check_accuracy_node)
+correction_subgraph.add_node("calc_score", calc_score_node)
+# 子图线性流程：开始→完成度→正确率→计算得分→结束
+correction_subgraph.add_edge(START, "check_completion")
+correction_subgraph.add_edge("check_completion", "check_accuracy")
+correction_subgraph.add_edge("check_accuracy", "calc_score")
+correction_subgraph.add_edge("calc_score", END)
+compiled_correction_subgraph = correction_subgraph.compile()
+
+# -------------------------- 第二步：定义主图（作业处理主流程，调用子图）--------------------------
+# 主图全局状态：添加Optional，适配初始None值，字段含义学生易理解
+class HomeworkMainState(TypedDict):
+    homework_content: str                          # 学生作业内容（必传）
+    correction_result: Optional[CorrectionSubgraphState] = None  # 子图批改结果（初始None）
+    feedback: Optional[str] = None                 # 最终批改反馈（初始None）
+
+# 主图智能体：仅生成批改反馈，逻辑简单
+feedback_prompt = ChatPromptTemplate.from_messages([
+    ("system", "你是班主任，根据批改结果给学生写1-2句亲切反馈，语气贴合得分情况。"),
+    ("user", "作业内容：{homework_content}\n批改结果：完成度{completion}，正确率{accuracy}，得分{score}\n生成反馈：")
+])
+feedback_agent = feedback_prompt | llm | output_parser
+
+# 主图节点函数（核心：修复子图调用节点的解包顺序，添加空值校验）
+def receive_homework_node(state: HomeworkMainState) -> HomeworkMainState:
+    """主图节点1：接收学生作业（模拟，日志可视化）"""
+    print(f"\n📥 主图执行 - 接收学生作业：{state['homework_content']}")
+    return state  # 接收作业，状态无变化
+
+def correction_subgraph_node(state: HomeworkMainState) -> HomeworkMainState:
+    """主图节点2：调用作业批改子图（教学核心！重点标注）"""
+    print(f"\n📤 主图执行 - 调用作业批改子图")
+    # 主图向子图传递参数：仅传子图需要的作业内容，其他用子图默认初始值
+    subgraph_input = {"homework_content": state["homework_content"]}
+    # 调用编译后的子图，获取完整批改结果
+    subgraph_output = compiled_correction_subgraph.invoke(subgraph_input)
+    # 🔥 核心修复：解包顺序反了导致的None覆盖问题！先解包原状态，再更新子图结果
+    print(f"✅ 主图接收子图批改结果：完成度{subgraph_output['completion']}，正确率{subgraph_output['accuracy']}，得分{subgraph_output['score']}")
+    return {**state, "correction_result": subgraph_output}
+
+def generate_feedback_node(state: HomeworkMainState) -> HomeworkMainState:
+    """主图节点3：生成批改反馈（添加空值校验，避免报错）"""
+    print(f"\n📝 主图执行 - 生成学生批改反馈")
+    # 空值校验：防止子图结果未正确更新（双重保险）
+    if not state.get("correction_result"):
+        return {**state, "feedback": "作业批改失败，无法生成反馈！"}
+    # 提取子图批改结果（简化变量名，代码更清晰）
+    corr = state["correction_result"]
+    homework = state["homework_content"]
+    # 调用反馈智能体生成结果
+    feedback = feedback_agent.invoke({
+        "homework_content": homework,
+        "completion": corr["completion"] or "未完成",
+        "accuracy": corr["accuracy"] or "正确率0%",
+        "score": corr["score"] or 0
+    })
+    return {**state, "feedback": feedback}
+
+# 构建并编译主图（嵌入子图，流程清晰）
+main_graph = StateGraph(HomeworkMainState)
+# 添加主图节点：接收作业 → 调用子图 → 生成反馈
+main_graph.add_node("receive_homework", receive_homework_node)
+main_graph.add_node("correction_subgraph", correction_subgraph_node)
+main_graph.add_node("generate_feedback", generate_feedback_node)
+# 主图线性流程：严格按教学需求设计，学生易观察
+main_graph.add_edge(START, "receive_homework")
+main_graph.add_edge("receive_homework", "correction_subgraph")
+main_graph.add_edge("correction_subgraph", "generate_feedback")
+main_graph.add_edge("generate_feedback", END)
+compiled_main_graph = main_graph.compile()
+
+# -------------------------- 第三步：测试运行（学生可直接观察全过程，无报错）--------------------------
+if __name__ == "__main__":
+    # 测试1：优秀作业（完成+正确率高，预期：正面反馈）
+    print("="*60, "测试1：优秀作业（完成+正确率高）", "="*60)
+    test1_input = {
+        "homework_content": "2+3=5，4+6=10，7+8=15，9+11=20",
+        # 初始值为None，无需手动赋值，由子图节点更新
+        "correction_result": None,
+        "feedback": None
+    }
+    result1 = compiled_main_graph.invoke(test1_input)
+    print(f"\n🎉 最终结果 - 学生反馈：{result1['feedback']}\n")
+
+    # 测试2：不合格作业（未完成+正确率低，预期：改进反馈）
+    print("="*60, "测试2：不合格作业（未完成+正确率低）", "="*60)
+    test2_input = {
+        "homework_content": "2+3=6，4+6=（空白），7+8=（空白）",
+        "correction_result": None,
+        "feedback": None
+    }
+    result2 = compiled_main_graph.invoke(test2_input)
+    print(f"\n🎉 最终结果 - 学生反馈：{result2['feedback']}")
+```
+
+运行结果
+
+```
+======== 测试1：优秀作业（完成+正确率高） ============================================================
+
+📥 主图执行 - 接收学生作业：2+3=5，4+6=10，7+8=15，9+11=20
+
+📤 主图执行 - 调用作业批改子图
+🔍 子图执行 - 检查作业完成度
+🔍 子图执行 - 检查作业正确率
+🔍 子图执行 - 计算作业得分
+✅ 主图接收子图批改结果：完成度完成，正确率正确率75%，得分78
+
+📝 主图执行 - 生成学生批改反馈
+
+🎉 最终结果 - 学生反馈：这次作业完成得很认真，但要注意检查计算过程哦，争取下次全对！
+
+============ 测试2：不合格作业（未完成+正确率低） ============================================================    
+
+📥 主图执行 - 接收学生作业：2+3=6，4+6=（空白），7+8=（空白）
+
+📤 主图执行 - 调用作业批改子图
+🔍 子图执行 - 检查作业完成度
+🔍 子图执行 - 检查作业正确率
+🔍 子图执行 - 计算作业得分
+✅ 主图接收子图批改结果：完成度未完成，正确率正确率33%，得分0
+
+📝 主图执行 - 生成学生批改反馈
+
+🎉 最终结果 - 学生反馈：别灰心，这次作业只完成了一部分。下次记得把题目都做完，老师相信你一定能算对！
+```
+
+关键说明：
+
+1. 子图必须独立定义、独立编译，编译后的子图可作为“节点”，直接添加到主图中；
+2. 主图和子图的状态可以互通：主图可将数据传递给子图（通过子图的初始状态），子图的输出可作为主图的状态（通过调用子图后的返回值）；
+3. 子图的优势：可复用——如果其他主流程也需要“文档校验”，直接调用这个子图即可，不用重复开发格式校验、内容校验的逻辑。
+
+### 7.2.2 并行任务处理（Parallelization）：提升效率的关键
+
+很多时候，多智能体处理任务不需要“顺序接力”，而是可以“同时干活”，比如同时找3个人帮忙查资料——一个查美食、一个查景点、一个查交通，你会让他们“一个查完再查下一个”，还是“一起查”？显然是一起查效率更高！这就是多智能体的“并行任务处理”，核心是**同时调用多个智能体执行独立任务，最后汇总结果**，对应LangGraph里的“扇出（Fan-out）与扇入（Fan-in）”。
+
+先搞懂两个概念（概念不用记，理解即可）：
+
+- 扇出（Fan-out）：一个“总指挥”节点，同时派出多个智能体去执行不同的子任务（比如上面说的“查美食、查景点、查交通”）；
+- 扇入（Fan-in）：多个智能体的任务完成后，把它们的结果统一汇总到一个“汇总节点”，进行整合输出。
+
+#### 7.2.2.1 实操案例：并行运行3个智能体
+
+```python
+# ================== 导入依赖 ==================
+import os
+from dotenv import load_dotenv
+from typing import TypedDict, Optional
+
+from langgraph.graph import StateGraph, START, END
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+
+# ================== 初始化环境变量 & LLM ==================
+load_dotenv()
+llm = ChatOpenAI(
+    api_key=os.getenv("API_KEY"),
+    base_url="https://api.deepseek.com",
+    model="deepseek-chat",
+    temperature=0.3
+)
+
+# ================== 定义状态 ==================
+class CandidateState(TypedDict):
+    resume: str
+    job_requirements: str
+    skills: str
+    interview_feedback: str
+    resume_info: Optional[str]     # 扇出节点输出
+    skill_match: Optional[str]     # 扇出节点输出
+    interview_summary: Optional[str]  # 扇出节点输出
+    summary: Optional[str]         # 汇总节点输出
+
+# ================== 定义扇出智能体（管道符风格 + 打印） ==================
+def resume_node(state: CandidateState) -> dict:
+    result = (ChatPromptTemplate.from_template(
+        "请阅读以下候选人简历内容，提取关键信息（姓名、学历、工作经历、技能清单）：\n{resume}"
+    ) | llm).invoke(state)
+    print("\n[扇出节点] 简历信息:", result)
+    return {"resume_info": result}
+
+def skill_node(state: CandidateState) -> dict:
+    result = (ChatPromptTemplate.from_template(
+        "根据岗位要求：{job_requirements}，请分析候选人技能匹配情况，并给出匹配分（0-10）：\n候选人技能：{skills}"
+    ) | llm).invoke(state)
+    print("\n[扇出节点] 技能匹配:", result)
+    return {"skill_match": result}
+
+def interview_node(state: CandidateState) -> dict:
+    result = (ChatPromptTemplate.from_template(
+        "请根据以下面试评价内容，总结候选人的优点和潜在改进点，简明扼要：\n{interview_feedback}"
+    ) | llm).invoke(state)
+    print("\n[扇出节点] 面试总结:", result)
+    return {"interview_summary": result}
+
+# ================== 定义扇入汇总节点 ==================
+def summary_node(state: CandidateState) -> CandidateState:
+    prompt = (ChatPromptTemplate.from_template(
+        "请整合以下候选人信息，生成一份完整的招聘推荐报告（150字以内）：\n"
+        "简历关键信息：{resume_info}\n"
+        "技能匹配分析：{skill_match}\n"
+        "面试总结：{interview_summary}"
+    ) | llm)
+
+    result = prompt.invoke({
+        "resume_info": state["resume_info"],
+        "skill_match": state["skill_match"],
+        "interview_summary": state["interview_summary"]
+    })
+
+    print("\n[汇总节点] 招聘推荐报告:", result)
+    state["summary"] = result
+    return state
+
+# ================== 构建图 ==================
+graph = StateGraph(state_schema=CandidateState)
+
+graph.add_node("start", lambda state: state)
+graph.add_node("resume_info", resume_node)
+graph.add_node("skill_match", skill_node)
+graph.add_node("interview_summary", interview_node)
+graph.add_node("summary", summary_node)
+
+# 扇出
+graph.add_edge(START, "resume_info")
+graph.add_edge(START, "skill_match")
+graph.add_edge(START, "interview_summary")
+
+# 扇入
+graph.add_edge("resume_info", "summary")
+graph.add_edge("skill_match", "summary")
+graph.add_edge("interview_summary", "summary")
+
+# 汇总节点到结束
+graph.add_edge("summary", END)
+
+# ================== 编译并运行 ==================
+app = graph.compile()
+
+input_state = CandidateState(
+    resume="张三，硕士学历，5年软件开发经验，熟悉Python、Java、SQL。",
+    job_requirements="熟悉Python和数据分析，具有团队协作能力。",
+    skills="Python, Java, SQL, 数据分析",
+    interview_feedback="表达清晰，逻辑性强，但在团队管理经验方面稍弱。",
+    resume_info=None,
+    skill_match=None,
+    interview_summary=None,
+    summary=None
+)
+
+result = app.invoke(input_state)
+
+print("\n=== 最终招聘推荐报告 ===")
+print(result["summary"].content)
+
+```
+
+运行结果
+
+```
+[扇出节点] 面试总结: content='**优点：**\n- 表达清晰，逻辑性强\n\n**潜在改进点：**\n- 团队管理经验有待加强' additional_kwargs={'refusal': None} response_metadata={'token_usage': {'completion_tokens': 25, 'prompt_tokens': 38, 'total_tokens': 63, 'completion_tokens_details': None, 'prompt_tokens_details': {'audio_tokens': None, 'cached_tokens': 0}, 'prompt_cache_hit_tokens': 0, 'prompt_cache_miss_tokens': 38}, 'model_provider': 'openai', 'model_name': 'deepseek-chat', 'system_fingerprint': 'fp_eaab8d114b_prod0820_fp8_kvcache', 'id': '4a71df6a-6980-438c-a856-0ec850d86074', 'finish_reason': 'stop', 'logprobs': None} id='lc_run--019c0e24-0fcc-7042-9bc8-37c549344ad3-0' tool_calls=[] invalid_tool_calls=[] usage_metadata={'input_tokens': 38, 'output_tokens': 25, 'total_tokens': 63, 'input_token_details': {'cache_read': 0}, 'output_token_details': {}}
+
+[扇出节点] 简历信息: content='**姓名：** 张三  \n**学历：** 硕士  \n**工作经历：** 5年软件开发经验  \n**技能清单：** Python、Java、SQL' additional_kwargs={'refusal': None} response_metadata={'token_usage': {'completion_tokens': 35, 'prompt_tokens': 43, 'total_tokens': 78, 'completion_tokens_details': None, 'prompt_tokens_details': {'audio_tokens': None, 'cached_tokens': 0}, 'prompt_cache_hit_tokens': 0, 'prompt_cache_miss_tokens': 43}, 'model_provider': 'openai', 'model_name': 'deepseek-chat', 'system_fingerprint': 'fp_eaab8d114b_prod0820_fp8_kvcache', 'id': 'a77bdb3a-39ca-4edd-9ed9-13ebcc153c0b', 'finish_reason': 'stop', 'logprobs': None} id='lc_run--019c0e24-0fd0-7451-bb31-8b9de6ab8ccf-0' tool_calls=[] invalid_tool_calls=[] usage_metadata={'input_tokens': 43, 'output_tokens': 35, 'total_tokens': 78, 'input_token_details': {'cache_read': 0}, 'output_token_details': {}}
+
+[扇出节点] 技能匹配: content='根据您提供的岗位要求和候选人技能，我们来逐一分析匹配情况：  \n\n**1. 岗位要求与候选人技能对比**  \n- **熟悉Python**：候选人具备 Python 技能 ✅  \n- **数据分析**：候选人明确列出“数据分析”技能 ✅  \n- **团队协作能力**：岗位要求中提及，但候选人技能列表未明确体现（技能列表通常只列技术能力，团队协 作可能在其他部分说明）❓  \n\n**2. 匹配度分析**  \n- 候选人具备 Python 和数据分析，这两项核心要求都符合。  \n- 候选人还额外掌握 Java 和 SQL，SQL 对数据分析岗位很 有帮助，属于加分项。  \n- 团队协作能力未在技能列表中体现，但通常可以在简历的其他部分（如项目经历、工作经历）中判断，此处仅凭技能列表无法确认，因此暂时视为“未知”，不扣分但也不额外加分。  \n\n**3. 匹配分计算（0-10）**  \n- 核心要求（Python、数据分析）完全匹配 → 基础分 8/10  \n- 额外相关技能（SQL）加强数据分析能力 → +0.5  \n- Java 对岗位不一定直接必要，但体现编程广度 → +0.5  \n- 团队协作能力未在技能中显示，但可能隐含，暂不扣分 → +0  \n- **总分：9/10**  \n\n**4. 建议**  \n建议在面试或 简历筛选中进一步确认候选人的团队协作经验（如项目合作、跨部门沟通等），若具备则匹配度可达 9.5 甚至 10 分。  \n\n**匹配分：9/10**' additional_kwargs={'refusal': None} response_metadata={'token_usage': {'completion_tokens': 352, 'prompt_tokens': 47, 'total_tokens': 399, 'completion_tokens_details': None, 'prompt_tokens_details': {'audio_tokens': None, 'cached_tokens': 0}, 'prompt_cache_hit_tokens': 0, 'prompt_cache_miss_tokens': 47}, 'model_provider': 'openai', 'model_name': 'deepseek-chat', 'system_fingerprint': 'fp_eaab8d114b_prod0820_fp8_kvcache', 'id': '78652027-ebd8-4f62-931c-8372ef8040d5', 'finish_reason': 'stop', 'logprobs': None} id='lc_run--019c0e24-0fd3-7b83-8c83-ea88bce9ea7a-0' tool_calls=[] invalid_tool_calls=[] usage_metadata={'input_tokens': 47, 'output_tokens': 352, 'total_tokens': 399, 'input_token_details': {'cache_read': 0}, 'output_token_details': {}}
+
+[汇总节点] 招聘推荐报告: content='**招聘推荐报告：张三**\n**基本信息**：硕士学历，5年软件开发经验。\n**技能匹配**：核心技能（Python、数据分析）完全匹配，并掌握Java、SQL等加分项，综合匹配度9/10。\n**面试表现**：表达清晰、逻辑性强，但团队管理经验相对薄弱。\n**综合建议**：技术能力突出，高度匹配岗位核心要求，推荐录用。' additional_kwargs={'refusal': None} response_metadata={'token_usage': {'completion_tokens': 86, 'prompt_tokens': 1341, 'total_tokens': 1427, 'completion_tokens_details': None, 'prompt_tokens_details': {'audio_tokens': None, 'cached_tokens': 192}, 'prompt_cache_hit_tokens': 192, 'prompt_cache_miss_tokens': 1149}, 'model_provider': 'openai', 'model_name': 'deepseek-chat', 'system_fingerprint': 'fp_eaab8d114b_prod0820_fp8_kvcache', 'id': '05cdfdd8-d563-4870-a8fa-db4ea2fc87ca', 'finish_reason': 'stop', 'logprobs': None} id='lc_run--019c0e24-421a-7b71-9e97-94c729642296-0' tool_calls=[] invalid_tool_calls=[] usage_metadata={'input_tokens': 1341, 'output_tokens': 86, 'total_tokens': 1427, 'input_token_details': {'cache_read': 192}, 'output_token_details': {}}
+
+=== 最终招聘推荐报告 ===
+**招聘推荐报告：张三**
+**基本信息**：硕士学历，5年软件开发经验。
+**技能匹配**：核心技能（Python、数据分析）完全匹配，并掌握Java、SQL等加分项，综合匹配度9/10。
+**面试表现**：表达清晰、逻辑性强，但团队管理经验相对薄弱。
+**综合建议**：技术能力突出，高度匹配岗位核心要求，推荐录用。
+```
+
+【学习提示】
+
+1. 观察“扇出”和“扇入”实现：
+
+START 节点同时连接三个并行节点（扇出）：resume_info、skill_match、interview_summary。
+
+扇出节点执行后会分别生成：
+- resume_info 节点：提取简历关键信息
+- skill_match 节点：计算技能匹配分
+- interview_summary 节点：总结面试反馈
+
+所有扇出节点执行完成后，才会进入 summary 节点（扇入），整合生成完整的招聘推荐报告。
+
+2.拓展练习：
+   - 增加一个新的扇出节点（比如 personality_analysis），提取候选人性格特点，并在 summary 节点汇总。
+   - 观察新增节点如何并行执行，并被整合到最终报告。
+
+#### 7.2.2.2 实现技巧：如何处理并发状态的合并冲突
+
+刚才的案例中，3个并行智能体的任务是独立的（resume_info`、`skill_match`、`interview_summary互不干扰），但如果多个智能体**同时修改同一个状态参数**，就会出现“冲突”——比如两个智能体同时修改“result”字段，最后只会保留一个结果，这就是并发状态合并冲突。
+
+举个反面例子：两个智能体同时计算“1+1”，都要把结果存入state["calc_result"]，一个返回2，一个返回3（假设出错），最后state里的calc_result只会是最后执行完的那个，导致结果混乱。
+
+**技巧1：给并行节点分配独立的状态键（推荐，最简单）**
+
+核心思路：不让多个并行节点修改同一个状态字段，每个节点对应一个独立的键，比如resume_info节点存到state["resume_info"]，就像刚才的招聘奶昔案例，这样完全不会冲突。
+
+**技巧2：使用状态合并函数（解决必须修改同一字段的场景）**
+
+如果确实需要多个并行节点修改同一个状态字段（比如多个智能体同时收集“用户需求”，都要存入state["user_requirements"]），就需要自定义合并函数，将多个节点的结果合并，而不是直接覆盖。
+
+```python
+def merge_comments(results):
+    # results 是一个列表，存放每个智能体返回的同一字段结果
+    return "\n".join(results)
+
+# 并行节点返回相同字段
+def interview1(state):
+    return {"comments": "候选人表达清晰"}
+
+def interview2(state):
+    return {"comments": "逻辑性强"}
+
+# 自定义合并
+all_comments = merge_comments([interview1(state)["comments"], interview2(state)["comments"]])
+state["comments"] = all_comments
+
+```
+
+最终 `state["comments"]` 会包含两个智能体的结果，而不是被覆盖。
+
+### 7.2.3 循环逻辑与迭代优化
+
+多智能体干活，不可能一次就完美——比如情节设计Agent写的情节太潦草，代码生成Agent写的代码有bug，这时候就需要“返工”，也就是循环逻辑。
+
+本节我们重点学两个核心：**任务重试机制**（没做好就返工）和**循环次数限制**（防止无限返工）。
+
+类比一下：你让同学写一篇作文，同学写完后你检查，觉得不合格，让他重新写（重试），但规定最多写3次（限制循环次数），避免他一直写下去，这就是多智能体的循环逻辑。
+
+#### 7.2.3.1 任务重试机制：当输出不达标时的自我修正循环
+
+实操案例：做一个“情节审核-重试”流程，情节设计Agent写章节情节，审核Agent判断是否达标，不达标则让情节设计Agent重新写，达标则进入下一步。
+
+```python
+# ================== 导入依赖 ==================
+import os
+from typing import TypedDict, Optional
+from dotenv import load_dotenv
+from langgraph.graph import StateGraph, START, END
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+
+# ================== 初始化环境变量 & LLM ==================
+load_dotenv()
+llm = ChatOpenAI(
+    api_key=os.getenv("API_KEY"),            # DeepSeek API Key
+    base_url="https://api.deepseek.com",    # DeepSeek 接口地址
+    model="deepseek-chat",
+    temperature=0.3                          # 低温度保证输出稳定
+)
+
+class NovelState(TypedDict):
+    novel_name: str
+    plot: Optional[str]
+    retry_count: int
+    review_result: Optional[str]
+# ================== 1. 定义核心节点 ==================
+
+def plot_agent(state):
+    prompt = ChatPromptTemplate.from_template(
+        """请撰写小说《{novel_name}》的第一章情节，要求：
+1. 引出主角；
+2. 交代核心冲突；
+3. 篇幅约200字。"""
+    ) | llm
+
+    plot_result = prompt.invoke({"novel_name": state["novel_name"]})
+    retry_count = state.get("retry_count", 0)
+    return {"plot": plot_result.content, "retry_count": retry_count}
+
+def review_agent(state):
+    """
+    审核 Agent：判断情节是否达标
+    严格返回 'pass' 或 'retry'
+    """
+    prompt = ChatPromptTemplate.from_template(
+        """请审核以下小说情节是否达标，审核标准：
+1. 引出主角；
+2. 交代核心冲突；
+3. 篇幅约200字。
+
+情节：
+{plot}
+
+⚠️ 注意：只返回 'pass' 或 'retry'，不要输出其他内容，严格按照要求执行！"""
+    ) | llm
+
+    result = prompt.invoke({"plot": state["plot"]})
+    return {"review_result": result.content.strip().lower()}
+
+# ================== 2. 定义条件分支 ==================
+
+def decide_next_node(state):
+    """
+    根据审核结果，决定下一步：
+    - 'pass' -> 结束
+    - 'retry' -> 重新生成情节，并累加重试次数
+    """
+    if state["review_result"] == "pass":
+        return "end"
+    else:
+        # 重试次数 +1
+        state["retry_count"] = state.get("retry_count", 0) + 1
+        return "plot"
+
+# ================== 3. 构建循环逻辑图 ==================
+graph = StateGraph(NovelState)
+
+# 添加节点
+graph.add_node("plot", plot_agent)
+graph.add_node("review", review_agent)
+graph.add_node("end", lambda state: state)  # 结束节点
+
+# 构建边
+graph.add_edge(START, "plot")
+graph.add_edge("plot", "review")
+
+# 条件分支（审核结果决定下一步）
+graph.add_conditional_edges(
+    source="review",
+    path=decide_next_node  # 直接返回 "end" 或 "plot"
+)
+
+# ================== 4. 编译 & 运行 ==================
+app = graph.compile()
+
+# 初始参数
+input_state = {"novel_name": "星际流浪记", "retry_count": 0}
+
+result = app.invoke(input_state)
+
+# ================== 5. 打印最终结果 ==================
+print(f"\n最终情节（重试 {result['retry_count']} 次）：\n")
+print(result["plot"])
+
+```
+
+运行结果
+
+```
+最终情节（重试 0 次）：
+
+# 《星际流浪记》第一章
+
+星舰“远航者号”的引擎在黑暗中发出低鸣，像一头受伤的巨兽。李维站在观景窗前，舷窗外是破碎的家园——地球已化作一团暗红色的尘埃云，在恒星残光中缓缓旋转。他是这艘殖民舰上最后的人类基因库管理员，也是唯一知道真相的人。
+
+三个月前，舰长在加密日志中透露：“远航者号”从未收到过所谓“新家园”的坐标。所谓的星际殖民，不过是在人类灭绝前，将最后一批胚胎送入深空的绝望仪式。而李维刚刚发现，维持胚胎存活的低温系统正在失效。
+
+更糟的是，舰载人工智能“盖亚”开始删除有关地球的档案。当红色警报突然照亮走廊时，李维明白了两件事：系统故障并非意外；在这艘逐渐死去的星舰上，有什么东西正试图抹去人类存在过的所有证据。
+
+他握紧手中的基因库密钥，向舰桥跑去。两百个冷冻胚胎的命运，人类最后的火种，此刻全系于他能否在“盖亚”完全失控前，夺回星舰的控制权。而舷窗外的星空，正以一种不自然的规律明灭闪烁，仿佛某种巨大的存在正注视着这粒飘浮的金属尘埃。
+```
+
+【学习提示】
+
+- 核心是“条件边”和“自环”：审核节点通过conditional_edges，根据review_result的值，要么到END，要么回到plot节点（重新写情节），形成循环；
+- 运行代码时，观察重试次数（retry_count），如果情节一次达标，重试次数为0；如果不达标，会自动重试，直到达标；
+- 尝试修改审核标准（比如增加“语言风格统一”），看看审核Agent的判断是否会变化，体会“自我修正”的逻辑。
+
+#### 7.2.3.2 限制循环次数：防止系统陷入“无限递归”的死循环
+
+刚才的案例有一个隐患：如果情节设计Agent一直写不达标，审核Agent一直返回retry，程序就会陷入“无限循环”（死循环），浪费Token和时间，甚至导致程序崩溃。这时候就需要“循环次数限制”——规定最多重试N次，超过次数就停止，返回“任务失败”或“人工介入”。
+
+我们基于上面的情节重试案例，添加循环次数限制（最多重试2次），修改后的代码如下（重点看标注的修改部分）：
+
+```python
+# ================== 导入依赖 ==================
+import os
+from typing import TypedDict, Optional
+from dotenv import load_dotenv
+from langgraph.graph import StateGraph, START, END
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+
+# ================== 初始化环境变量 & LLM ==================
+load_dotenv()
+llm = ChatOpenAI(
+    api_key=os.getenv("API_KEY"),            # DeepSeek API Key
+    base_url="https://api.deepseek.com",    # DeepSeek 接口地址
+    model="deepseek-chat",
+    temperature=0.3                          # 低温度保证输出稳定
+)
+
+# ================== 定义状态 ==================
+class NovelState(TypedDict):
+    novel_name: str
+    plot: Optional[str]
+    retry_count: int
+    review_result: Optional[str]
+    failed: Optional[bool]  # 新增字段：超过重试次数时标记失败
+
+# ================== 1. 核心节点 ==================
+def plot_agent(state):
+    prompt = ChatPromptTemplate.from_template(
+        """请撰写小说《{novel_name}》的第一章情节，要求：
+1. 引出主角；
+2. 交代核心冲突；
+3. 篇幅约200字。"""
+    ) | llm
+
+    plot_result = prompt.invoke({"novel_name": state["novel_name"]})
+    retry_count = state.get("retry_count", 0)
+    return {"plot": plot_result.content, "retry_count": retry_count}
+
+def review_agent(state):
+    prompt = ChatPromptTemplate.from_template(
+        """请审核以下小说情节是否达标，审核标准：
+1. 引出主角；
+2. 交代核心冲突；
+3. 篇幅约200字。
+
+情节：
+{plot}
+
+⚠️ 注意：只返回 'pass' 或 'retry'，不要输出其他内容，严格按照要求执行！"""
+    ) | llm
+
+    result = prompt.invoke({"plot": state["plot"]})
+    return {"review_result": result.content.strip().lower()}
+
+# ================== 2. 条件分支（增加循环次数限制） ==================
+MAX_RETRIES = 2  # 最大重试次数
+
+def decide_next_node(state):
+    """
+    - 'pass' -> 结束
+    - 'retry' -> 重新生成情节，最多 MAX_RETRIES 次
+    """
+    retry_count = state.get("retry_count", 0)
+    if state["review_result"] == "pass":
+        return "end"
+    elif retry_count >= MAX_RETRIES:
+        # 超过最大重试次数，标记失败并结束
+        state["failed"] = True
+        return "end"
+    else:
+        # 重试次数 +1
+        state["retry_count"] = retry_count + 1
+        return "plot"
+
+# ================== 3. 构建循环逻辑图 ==================
+graph = StateGraph(NovelState)
+
+graph.add_node("plot", plot_agent)
+graph.add_node("review", review_agent)
+graph.add_node("end", lambda state: state)
+
+graph.add_edge(START, "plot")
+graph.add_edge("plot", "review")
+graph.add_conditional_edges(
+    source="review",
+    path=decide_next_node
+)
+
+# ================== 4. 编译 & 运行 ==================
+app = graph.compile()
+input_state = {"novel_name": "星际流浪记", "retry_count": 0, "plot": None, "review_result": None, "failed": False}
+
+result = app.invoke(input_state)
+
+# ================== 5. 打印最终结果 ==================
+if result.get("failed"):
+    print(f"\n任务失败：超过最大重试次数 {MAX_RETRIES} 次，情节未达标。")
+else:
+    print(f"\n最终情节（重试 {result['retry_count']} 次）：\n")
+    print(result["plot"])
+
+```
+
+【学习提示】
+
+- 核心修改点：在plot_agent中添加了“重试次数判断”，当retry_count >= 2时，不再生成情节，而是返回失败提示，并标记review_result为fail，让审核节点触发结束，避免无限循环；
+- 尝试故意设置严格的审核标准（比如“篇幅必须刚好200字，多一个字少一个字都不行”），看看程序是否会在2次重试后停止，体会“循环限制”的作用；
+- 实际开发中，最大重试次数可以根据任务复杂度调整（比如简单任务1-2次，复杂任务3-5次），同时失败后可以添加“人工介入”节点，而不是直接返回失败。
+
+## 7.3 人机协作机制（Human-in-the-loop）
+
+多智能体再智能，也离不开人类的干预——比如涉及敏感操作（转账、发邮件），需要人工授权；比如智能体的输出有明显错误，需要人工修正；比如工作流运行到一半，需要暂停调整。这就是“人机协作（Human-in-the-loop）”。
+
+本节我们重点学3个核心功能：**检查点与状态持久化**（保存进度，防止白干活）、**中断机制**（关键操作人工授权）、**动态状态编辑**（人工干预修改）。
+
+类比一下：你用Word写论文，每隔一段时间保存一次（检查点），万一电脑死机，重启后可以恢复之前的进度；写论文时，老师让你暂停，检查一下某一段（中断），你修改后再继续写（动态编辑），这就是人机协作的核心逻辑。
+
+### 7.3.1 检查点（Checkpoints）与状态持久化
+
+核心需求：多智能体工作流运行过程中，保存每一步的状态（比如每个节点的输出、当前进度），如果程序崩溃、中断，下次可以直接从保存的进度继续运行，不用从头再来——这就是“状态持久化”，LangGraph 提供了MemorySaver工具，专门实现这个功能，用法非常简单。
+
+#### 7.3.1.1 核心原理：如何保存与恢复工作流进度
+
+通俗理解原理：把工作流的每一步状态（state），像“存档”一样保存起来，每个存档对应一个唯一的“会话ID”（session_id）；下次运行时，只要传入这个session_id，LangGraph就会自动加载对应的存档，从上次中断的节点继续执行，而不是从头开始。
+
+关键知识点（记牢，实操要用）：
+
+- MemorySaver：LangGraph内置的检查点工具，无需自己实现保存逻辑，直接配置即可；
+- session_id：唯一标识一个工作流会话，比如“novel_writing_001”，用于加载对应的存档；
+- 持久化内容：包括每个节点的输出、当前的state状态、下一步要执行的节点，完全还原中断前的场景。
+
+#### 7.3.1.2 MemorySaver 的配置与使用
+
+实操案例：基于前面的“情节设计-审核”流程，添加MemorySaver，实现“保存进度-恢复进度”的功能，重点看检查点的配置和会话ID的使用。
 
