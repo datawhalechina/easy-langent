@@ -2526,9 +2526,1048 @@ print("\n✅ 工作流回退并重新执行完成")
 
 2.**状态保留**：回退时可以保留原有状态（如 `task`），也可以修改状态（如清空 `task_result`、添加 `retry` 标记），灵活度高。
 
-## 7.4 综合实践：小说创作助手
+## 7.4 综合实践：智能体小说创作助手
 
-经过了2章的学习，现在大家应该掌握了langgraph的各个相关知识，现在到了考验大家的时候~
+经过了2章的学习，现在大家应该掌握了langgraph的各个相关知识，现在到了考验大家的时候~~
 
 读书的时候，笔者一直迷恋小说，有时候在想，我要是小说中的主角就好了，打败反派拯救世界，现在要借助AI来实现我的愿望了，因此我们综合实践就是通过智能体生成小说。由于篇幅的关系，我们会按照最简单的形式去完成，主要目的是从综合实践中掌握langgraph框架。
+
+实践项目流程是这么设计的：
+
+`用户输入-->LLM生成小说题目 主要角色 大致情节-->用户审核确认-->生成小说大纲和章节-->生成小说`
+
+这是我们实践的核心流程，接下来，我们就一步步拆解这个流程，用langgraph框架将其落地为可运行的智能体小说创作助手。大家记住，本次实践的核心不是“写一篇完美的小说”，而是“掌握langgraph的节点设计、状态管理、条件分支流转”——把每一步流程对应到langgraph的核心组件，就是我们本次实践的重中之重。
+
+> Tips: 建议有能力的同学自己完成，不再参考后面的内容~ 
+
+### 7.4.1 实践目标
+
+在动手前，我们先明确本次实践要达成的3个核心目标，避免大家偏离重点：
+
+1. 能将“小说创作流程”拆解为langgraph的**节点（Node）**，理解每个节点的职责的作用；
+2. 掌握langgraph的**状态（State）**设计，实现节点间的数据传递（比如将LLM生成的题目、角色，传递给大纲生成节点）；
+3. 学会使用langgraph的**条件分支（Conditional Edge）**，处理“用户审核确认”的分支逻辑（审核通过则继续，不通过则重新生成）；
+4. 能独立运行完整的langgraph图，完成一次简单的小说生成全流程，巩固前2章所学的langgraph基础知识点。
+
+提示：大家在动手时，每写一个组件，都要回头对应前2章的知识点（比如节点、条件分支以及人机协同），做到“学用结合”，这才是综合实践的意义。
+
+### 7.4.2 核心步骤1：设计langgraph状态（State）
+
+我们先回顾前面的知识点：langgraph的状态（State）是整个智能体的“数据载体”，用于在不同节点之间传递数据。结合我们的小说创作流程，思考一下：整个流程中，需要传递哪些数据？
+
+梳理流程中的数据流转：用户输入（小说类型、偏好）→ LLM生成（题目、主要角色、大致情节）→ 用户审核（确认结果：通过/不通过）→ 大纲生成（基于通过的题目、角色、情节）→ 小说生成（基于大纲）。
+
+因此，我们的状态需要包含以上所有需要传递的数据，用typing模块的TypedDict来定义（结构化类型提示，明确状态中各字段的类型，避免数据混乱，同时更轻量，适配langgraph的状态传递需求），代码如下，每一行都有详细注释，大家重点理解字段的含义和作用：
+
+```python
+class NovelCreationState(TypedDict):
+    """小说创作全流程状态管理（含进度追踪）"""
+    # 初始输入
+    user_requirement: str  # 无默认值，必填
+    # 基础设定（第二阶段）
+    novel_title: NotRequired[Optional[str]]
+    main_characters: NotRequired[Optional[List[Dict[str, str]]]]
+    plot_overview: NotRequired[Optional[str]]
+    # 确认状态
+    is_setting_confirmed: NotRequired[bool]
+    is_outline_confirmed: NotRequired[bool]
+    # 大纲与章节（第三阶段）
+    novel_outline: NotRequired[Optional[str]]
+    chapter_structure: NotRequired[Optional[List[Dict[str, str]]]]
+    # 最终小说（第四阶段）
+    complete_novel: NotRequired[Optional[str]]
+    # 新增：进度追踪字段
+    current_stage: NotRequired[str]  # 当前流程阶段（需求收集/设定生成/大纲生成/小说生成）
+    chapter_generated_count: NotRequired[int]  # 已生成章节数
+```
+
+### 7.4.3 核心步骤2：定义各个节点（Node）
+
+节点是langgraph的“执行单元”，每个节点对应一个具体的操作（比如“调用LLM生成题目和角色”“生成小说大纲”）。结合我们的流程，我们需要定义5个核心节点，每个节点的职责明确，且仅完成一件事（遵循“单一职责原则”，便于后续修改和调试）。
+
+先回顾节点的定义方式：langgraph中，节点可通过函数定义，函数的输入是“状态（State）”，输出是“更新后的状态（State）”——因为节点执行后，会产生新的数据（比如LLM生成题目后，需要将题目更新到状态中）。
+
+#### 节点1：用户输入节点（user_input_node）
+
+职责：获取用户的小说创作需求（比如类型、主角偏好、情节要求），并更新到状态中。这里我们简化处理，让用户直接输入文本，节点将输入内容赋值给state.user_input。
+
+```python
+def user_input_node(state: NovelCreationState):
+    # 提示用户输入需求，引导用户明确创作方向
+    print("请输入你的小说创作需求（示例：科幻类型，主角是计算机专业大学生，要有AI相关的反转情节，篇幅简短）：")
+    user_input = input()
+    # 更新状态中的user_input字段
+    state.user_input = user_input
+    # 返回更新后的状态（必须返回状态，否则后续节点无法获取数据）
+    return state
+```
+
+#### 节点2：LLM初始生成节点（llm_initial_generate_node）
+
+职责：接收用户输入（从状态中获取state.user_input），调用LLM生成小说题目、主要角色、大致情节，并更新到状态中。这是核心节点之一，重点是“调用LLM并解析结果”。
+
+```python
+def generate_basic_setting(state: NovelCreationState) -> NovelCreationState:
+    """节点2：生成小说基础设定"""
+    print_process_progress("设定生成", "（开始生成题目/角色/情节）")
+    
+    prompt = PromptTemplate(
+        template="""
+        请根据用户需求生成小说基础设定，要求：
+        1. 小说题目：1-2个备选，简洁有吸引力
+        2. 主要角色：至少3个，格式为「姓名：性格描述」
+        3. 情节概述：100-200字，清晰说明故事整体走向
+        
+        用户需求：{user_requirement}
+        
+        输出格式（严格遵循）：
+        题目：xxx
+        主要角色：
+        - 姓名1：性格描述1
+        - 姓名2：性格描述2
+        - 姓名3：性格描述3
+        情节概述：xxx
+        """,
+        input_variables=["user_requirement"]
+    )
+    
+    response = llm.invoke(prompt.format(user_requirement=state["user_requirement"]))
+    setting_content = response.content.strip()
+    
+    # 解析结果
+    lines = setting_content.split("\n")
+    state["main_characters"] = []
+    for line in lines:
+        if line.startswith("题目："):
+            state["novel_title"] = line.replace("题目：", "").strip()
+        elif line.startswith("主要角色："):
+            continue
+        elif line.startswith("- "):
+            name, desc = line.replace("- ", "").split("：", 1)
+            state["main_characters"].append({"姓名": name, "性格描述": desc})
+        elif line.startswith("情节概述："):
+            state["plot_overview"] = line.replace("情节概述：", "").strip()
+    
+    # 展示设定
+    print("\n===== 生成的小说基础设定 =====")
+    print(f"题目：{state['novel_title']}")
+    print("主要角色：")
+    for char in state["main_characters"]:
+        print(f"- {char['姓名']}：{char['性格描述']}")
+    print(f"情节概述：{state['plot_overview']}")
+    
+    state["current_stage"] = "设定生成"
+    print_process_progress("设定生成", "（完成）✅")
+    return state
+```
+
+#### 节点3：确认小说基础设定（confirm_basic_setting）
+
+职责：接收llm_initial_generate_node输入，调用中断机制人工审核，确认生成的基础设定是否满足用户的需求
+
+```python
+def confirm_basic_setting(state: NovelCreationState) -> NovelCreationState:
+    """节点3：人工审核确认基础设定（LangGraph 中断后执行）"""
+    print("\n===== ⚠️ 人工审核 - 基础设定确认环节 =====")
+    confirm = input("是否确认以上基础设定？（确认请输入y，需修改请输入n并说明修改内容）：")
+    
+    if confirm.lower() == "y":
+        state["is_setting_confirmed"] = True
+        print("✅ 基础设定已确认，进入下一阶段！")
+    else:
+        # 接收修改需求并更新
+        modify_content = input("请输入你的修改需求（如：修改角色名/调整情节/更换题目）：")
+        print("🔄 正在根据你的需求修改基础设定...")
+        
+        prompt = PromptTemplate(
+            template="""
+            请根据用户的原始需求和修改需求，更新小说基础设定：
+            原始需求：{user_requirement}
+            修改需求：{modify_content}
+            输出格式（严格遵循）：
+            题目：xxx
+            主要角色：
+            - 姓名1：性格描述1
+            - 姓名2：性格描述2
+            - 姓名3：性格描述3
+            情节概述：xxx
+            """,
+            input_variables=["user_requirement", "modify_content"]
+        )
+        
+        response = llm.invoke(prompt.format(
+            user_requirement=state["user_requirement"],
+            modify_content=modify_content
+        ))
+        setting_content = response.content.strip()
+        
+        # 重新解析
+        lines = setting_content.split("\n")
+        state["main_characters"] = []
+        for line in lines:
+            if line.startswith("题目："):
+                state["novel_title"] = line.replace("题目：", "").strip()
+            elif line.startswith("主要角色："):
+                continue
+            elif line.startswith("- "):
+                name, desc = line.replace("- ", "").split("：", 1)
+                state["main_characters"].append({"姓名": name, "性格描述": desc})
+            elif line.startswith("情节概述："):
+                state["plot_overview"] = line.replace("情节概述：", "").strip()
+        
+        # 再次展示并确认
+        print("\n===== 修改后的基础设定 =====")
+        print(f"题目：{state['novel_title']}")
+        print("主要角色：")
+        for char in state["main_characters"]:
+            print(f"- {char['姓名']}：{char['性格描述']}")
+        print(f"情节概述：{state['plot_overview']}")
+        
+        re_confirm = input("是否确认修改后的设定？（y/n）：")
+        if re_confirm.lower() == "y":
+            state["is_setting_confirmed"] = True
+            print("✅ 基础设定已确认！")
+        else:
+            print("❌ 未确认，将重新生成基础设定。")
+    
+    return state
+```
+
+#### 节点4：生成小说大纲与章节结构（generate_outline_chapter）
+
+```python
+def generate_outline_chapter(state: NovelCreationState) -> NovelCreationState:
+    """节点4：生成小说大纲与章节结构"""
+    if not state.get("is_setting_confirmed", False):
+        raise ValueError("❌ 基础设定未确认，无法生成大纲！")
+    
+    print_process_progress("大纲生成", "（开始生成大纲/章节结构）")
+    
+    prompt = PromptTemplate(
+        template="""
+        请根据已确认的小说基础设定，生成：
+        1. 小说整体大纲：200-300字，清晰说明故事的开端、发展、高潮、结局
+        2. 章节结构：至少8章，格式为「章节X：章节情节概述（1-2句话）」，章节间逻辑连贯
+        
+        基础设定：
+        题目：{novel_title}
+        主要角色：{main_characters}
+        情节概述：{plot_overview}
+        
+        输出格式（严格遵循）：
+        整体大纲：xxx
+        章节结构：
+        - 章节1：xxx
+        - 章节2：xxx
+        ...
+        """,
+        input_variables=["novel_title", "main_characters", "plot_overview"]
+    )
+    
+    # 格式化角色信息
+    char_str = "\n".join([f"{c['姓名']}：{c['性格描述']}" for c in state["main_characters"]])
+    
+    response = llm.invoke(prompt.format(
+        novel_title=state["novel_title"],
+        main_characters=char_str,
+        plot_overview=state["plot_overview"]
+    ))
+    outline_content = response.content.strip()
+    
+    # 解析结果
+    lines = outline_content.split("\n")
+    state["chapter_structure"] = []
+    for line in lines:
+        if line.startswith("整体大纲："):
+            state["novel_outline"] = line.replace("整体大纲：", "").strip()
+        elif line.startswith("章节结构："):
+            continue
+        elif line.startswith("- 章节"):
+            chapter_name, chapter_desc = line.replace("- ", "").split("：", 1)
+            state["chapter_structure"].append({"章节名": chapter_name, "情节概述": chapter_desc})
+    
+    # 展示大纲
+    print("\n===== 生成的小说大纲与章节结构 =====")
+    print(f"整体大纲：{state['novel_outline']}")
+    print("章节结构：")
+    for chapter in state["chapter_structure"]:
+        print(f"- {chapter['章节名']}：{chapter['情节概述']}")
+    
+    state["current_stage"] = "大纲生成"
+    print_process_progress("大纲生成", "（完成）✅")
+    return state
+```
+
+#### 节点5：确认小说章节设定（generate_outline_chapter）
+
+职责：接收generate_outline_chapter输入，调用中断机制人工审核，确认生成的章节是否满足用户的需求
+
+```python
+def confirm_outline_chapter(state: NovelCreationState) -> NovelCreationState:
+    """节点5：人工审核确认大纲与章节结构（LangGraph 中断后执行）"""
+    print("\n===== ⚠️ 人工审核 - 大纲与章节结构确认环节 =====")
+    confirm = input("是否确认以上大纲与章节结构？（确认请输入y，需修改请输入n并说明修改内容）：")
+    
+    if confirm.lower() == "y":
+        state["is_outline_confirmed"] = True
+        print("✅ 大纲与章节结构已确认，进入小说生成阶段！")
+    else:
+        # 接收修改需求并更新
+        modify_content = input("请输入你的修改需求（如：调整章节顺序/修改某章情节/增减章节数）：")
+        print("🔄 正在根据你的需求修改大纲与章节结构...")
+        
+        char_str = "\n".join([f"{c['姓名']}：{c['性格描述']}" for c in state["main_characters"]])
+        prompt = PromptTemplate(
+            template="""
+            请根据已确认的基础设定和用户修改需求，更新小说大纲与章节结构：
+            基础设定：
+            题目：{novel_title}
+            主要角色：{main_characters}
+            情节概述：{plot_overview}
+            修改需求：{modify_content}
+            
+            输出格式（严格遵循）：
+            整体大纲：xxx
+            章节结构：
+            - 章节1：xxx
+            - 章节2：xxx
+            ...
+            """,
+            input_variables=["novel_title", "main_characters", "plot_overview", "modify_content"]
+        )
+        
+        response = llm.invoke(prompt.format(
+            novel_title=state["novel_title"],
+            main_characters=char_str,
+            plot_overview=state["plot_overview"],
+            modify_content=modify_content
+        ))
+        outline_content = response.content.strip()
+        
+        # 重新解析
+        lines = outline_content.split("\n")
+        state["novel_outline"] = None
+        state["chapter_structure"] = []
+        for line in lines:
+            if line.startswith("整体大纲："):
+                state["novel_outline"] = line.replace("整体大纲：", "").strip()
+            elif line.startswith("章节结构："):
+                continue
+            elif line.startswith("- 章节"):
+                chapter_name, chapter_desc = line.replace("- ", "").split("：", 1)
+                state["chapter_structure"].append({"章节名": chapter_name, "情节概述": chapter_desc})
+        
+        # 再次展示并确认
+        print("\n===== 修改后的大纲与章节结构 =====")
+        print(f"整体大纲：{state['novel_outline']}")
+        print("章节结构：")
+        for chapter in state["chapter_structure"]:
+            print(f"- {chapter['章节名']}：{chapter['情节概述']}")
+        
+        re_confirm = input("是否确认修改后的大纲与章节结构？（y/n）：")
+        if re_confirm.lower() == "y":
+            state["is_outline_confirmed"] = True
+            print("✅ 大纲与章节结构已确认！")
+        else:
+            print("❌ 未确认，将重新生成大纲。")
+    
+    return state
+```
+
+#### 节点6：按章节生成小说（generate_complete_novel）
+
+```
+def generate_complete_novel(state: NovelCreationState) -> NovelCreationState:
+    """节点6：逐章生成小说正文（带章节进度）"""
+    if not state.get("is_outline_confirmed", False):
+        raise ValueError("❌ 大纲与章节未确认，无法生成小说！")
+    
+    print_process_progress("小说生成", "（开始逐章生成正文）")
+    # 初始化进度
+    state["chapter_generated_count"] = 0
+    chapter_total = len(state["chapter_structure"])
+    print_chapter_progress(0, chapter_total)
+    
+    # 格式化基础信息
+    char_str = "\n".join([f"{c['姓名']}：{c['性格描述']}" for c in state["main_characters"]])
+    novel_basic_info = f"""
+    小说题目：{state['novel_title']}
+    主要角色：{char_str}
+    整体大纲：{state['novel_outline']}
+    """
+    full_novel_content = f"# {state['novel_title']}\n\n## 小说核心设定\n{novel_basic_info.replace('    ', '')}\n\n---\n"
+    
+    # 单章生成Prompt
+    chapter_prompt = PromptTemplate(
+        template="""
+        请根据小说的核心设定、整体大纲，生成指定章节的正文内容，要求：
+        1. 内容严格遵循该章节的情节概述，细节丰富，符合小说创作风格
+        2. 角色性格与基础设定一致，对话自然，动作、心理描写贴合角色
+        3. 章节开头标注章节名，结尾做轻微过渡，为下一章铺垫
+        4. 单章字数控制在200-400字，语言流畅，情节连贯
+        
+        小说核心设定：{novel_basic_info}
+        当前生成章节：{chapter_name}
+        本章节情节概述：{chapter_desc}
+        已生成章节数：{generated_chapter_num}/{total_chapter}
+        
+        输出格式：直接输出生成的章节正文，无需额外说明
+        """,
+        input_variables=["novel_basic_info", "chapter_name", "chapter_desc", "generated_chapter_num", "total_chapter"]
+    )
+    
+    # 逐章生成
+    for idx, chapter in enumerate(state["chapter_structure"], 1):
+        chapter_name = chapter["章节名"]
+        chapter_desc = chapter["情节概述"]
+        print(f"\n🔨 【生成中】{chapter_name}...")
+        
+        # 调用LLM生成单章
+        chapter_response = llm.invoke(chapter_prompt.format(
+            novel_basic_info=novel_basic_info,
+            chapter_name=chapter_name,
+            chapter_desc=chapter_desc,
+            generated_chapter_num=idx,
+            total_chapter=chapter_total
+        ))
+        chapter_content = chapter_response.content.strip()
+        
+        # 拼接内容
+        full_novel_content += f"\n{chapter_content}\n\n---\n"
+        # 更新进度
+        state["chapter_generated_count"] = idx
+        print_chapter_progress(idx, chapter_total)
+        print(f"✅ 【生成完成】{chapter_name}：\n{chapter_content}\n" + "-"*50)
+    
+    # 补充结尾
+    full_novel_content += f"\n### 小说完本（总章节数：{chapter_total} | 创作基于用户需求：{state['user_requirement']}）"
+    state["complete_novel"] = full_novel_content
+    state["current_stage"] = "小说生成"
+    
+    # 最终进度展示
+    print_process_progress("小说生成", "（完成）✅")
+    print(f"\n🎉 逐章生成完成！小说共{chapter_total}章，总字数≥2000字")
+    return state
+```
+
+### 7.4.4 核心步骤3：构建langgraph图（StateGraph）
+
+节点定义完成后，我们需要用langgraph的StateGraph，将这些节点“串联”起来，定义节点之间的流转关系（边），尤其是处理“用户审核”的条件分支——这是本次实践的核心难点，也是大家需要重点掌握的langgraph用法。
+
+先梳理流转关系，结合流程和节点，绘制流转逻辑（大家可结合这个逻辑，理解代码）：
+
+1. 流程从【用户输入节点】开始，先收集用户的小说创作需求；
+
+2. 需求收集完成后，进入【LLM 初始生成节点】，由 AI 生成小说核心信息；
+
+3. 核心信息生成后，进入【用户审核节点】，等待用户给出审核结果；
+
+4. 根据审核结果走不同分支：
+
+   - 审核通过（audit_result=pass）：进入【大纲生成节点】；
+
+   - 审核不通过（audit_result=reject）：回到【LLM 初始生成节点】重新生成核心信息；
+
+5. 大纲生成完成后，直接进入【小说生成节点】，AI 创作最终的完整小说；
+
+6. 小说生成完毕，整个流程结束。
+
+```python
+def build_novel_creation_graph() -> CompiledStateGraph:
+    """构建带中断的小说创作工作流（LangGraph v1.0.0+ 官方规范）"""
+    # 初始化状态图
+    graph = StateGraph(NovelCreationState)
+    
+    # 添加节点
+    graph.add_node("get_user_input", get_user_input)
+    graph.add_node("generate_basic_setting", generate_basic_setting)
+    graph.add_node("confirm_basic_setting", confirm_basic_setting)
+    graph.add_node("generate_outline_chapter", generate_outline_chapter)
+    graph.add_node("confirm_outline_chapter", confirm_outline_chapter)
+    graph.add_node("generate_complete_novel", generate_complete_novel)
+    
+    # 定义节点跳转逻辑
+    graph.set_entry_point("get_user_input")
+    graph.add_edge("get_user_input", "generate_basic_setting")
+    graph.add_edge("generate_basic_setting", "confirm_basic_setting")
+    
+    # 设定确认后跳转逻辑
+    def setting_confirm_router(state: NovelCreationState) -> str:
+        return "generate_outline_chapter" if state.get("is_setting_confirmed", False) else "generate_basic_setting"
+    graph.add_conditional_edges("confirm_basic_setting", setting_confirm_router)
+    
+    # 大纲生成后跳转
+    graph.add_edge("generate_outline_chapter", "confirm_outline_chapter")
+    
+    # 大纲确认后跳转逻辑
+    def outline_confirm_router(state: NovelCreationState) -> str:
+        return "generate_complete_novel" if state.get("is_outline_confirmed", False) else "generate_outline_chapter"
+    graph.add_conditional_edges("confirm_outline_chapter", outline_confirm_router)
+    
+    # 小说生成完成后结束
+    graph.add_edge("generate_complete_novel", END)
+    
+    # 1. 创建官方推荐的 MemorySaver 检查点
+    checkpointer = MemorySaver()
+    # 2. 编译工作流：完全匹配 v1.0.0+ 接口规范
+    compiled_graph = graph.compile(
+        checkpointer=checkpointer,
+        interrupt_before=["confirm_basic_setting", "confirm_outline_chapter"]  # 审核节点前中断
+    )
+    
+    return compiled_graph
+```
+
+### 7.4.5案例参考
+
+```python
+import os
+from typing import Dict, List, Optional, TypedDict, NotRequired
+from dotenv import load_dotenv
+from langchain_core.prompts import PromptTemplate
+from langchain_openai import ChatOpenAI
+from langgraph.graph import StateGraph, END
+from langgraph.graph.state import CompiledStateGraph
+from langgraph.checkpoint.memory import MemorySaver
+
+# ===================== 1. 加载环境变量 =====================
+# 加载.env文件中的环境变量（如API_KEY），避免硬编码敏感信息
+load_dotenv()
+
+# ===================== 2. 初始化大语言模型 =====================
+# 配置DeepSeek大模型参数，用于小说创作各阶段的文本生成
+llm = ChatOpenAI(
+    api_key=os.getenv("API_KEY"),  # 从环境变量读取API密钥
+    base_url="https://api.deepseek.com",  # DeepSeek API地址
+    model="deepseek-chat",  # 选用的模型版本
+    temperature=0.3  # 生成文本的随机性，0.3表示低随机性，输出更稳定
+)
+
+# ===================== 3. 定义工作流状态结构 =====================
+# 使用TypedDict定义工作流的状态数据结构，统一管理全流程的所有数据
+# 包含输入、生成结果、确认状态、进度追踪四大类字段
+class NovelCreationState(TypedDict):
+    """小说创作全流程状态管理（含进度追踪）"""
+    # 初始输入：用户的小说创作需求（必填）
+    user_requirement: str
+    # 基础设定：生成的小说核心信息（非必填，生成后赋值）
+    novel_title: NotRequired[Optional[str]]  # 小说标题
+    main_characters: NotRequired[Optional[List[Dict[str, str]]]]  # 主要角色列表
+    plot_overview: NotRequired[Optional[str]]  # 情节概述
+    # 确认状态：标记人工审核结果
+    is_setting_confirmed: NotRequired[bool]  # 基础设定是否确认
+    is_outline_confirmed: NotRequired[bool]  # 大纲章节是否确认
+    # 大纲与章节：生成的结构信息
+    novel_outline: NotRequired[Optional[str]]  # 整体大纲
+    chapter_structure: NotRequired[Optional[List[Dict[str, str]]]]  # 章节结构列表
+    # 最终小说：生成的完整正文
+    complete_novel: NotRequired[Optional[str]]
+    # 进度追踪：监控流程执行状态
+    current_stage: NotRequired[str]  # 当前流程阶段（需求收集/设定生成/大纲生成/小说生成）
+    chapter_generated_count: NotRequired[int]  # 已生成章节数
+
+# ===================== 4. 工具函数：进度展示 =====================
+def print_process_progress(current_stage: str, detail: str = ""):
+    """打印整体流程进度，让用户直观了解当前执行阶段"""
+    # 阶段映射表：将阶段名称转换为进度百分比标识
+    stage_map = {
+        "需求收集": "1/4",
+        "设定生成": "2/4",
+        "大纲生成": "3/4",
+        "小说生成": "4/4"
+    }
+    progress = stage_map.get(current_stage, "未知阶段")
+    print(f"\n🔄 【整体进度 {progress}】- {current_stage} {detail}")
+
+def print_chapter_progress(generated: int, total: int):
+    """打印章节生成进度（百分比），监控小说正文生成进度"""
+    percentage = (generated / total) * 100 if total > 0 else 0
+    print(f"\n📖 【章节进度】已完成 {generated}/{total} 章 ({percentage:.1f}%)")
+
+# ===================== 5. 定义各阶段节点函数 =====================
+def get_user_input(state: NovelCreationState) -> NovelCreationState:
+    """节点1：接收用户输入的创作需求（流程入口）"""
+    print_process_progress("需求收集", "（开始）")
+    # 获取用户输入的创作需求（题材/风格/其他要求）
+    user_input = input("请输入你的小说创作需求（题材/风格/其他要求）：")
+    # 初始化状态核心字段
+    state["user_requirement"] = user_input
+    state["current_stage"] = "需求收集"
+    state["is_setting_confirmed"] = False  # 初始化为未确认
+    state["is_outline_confirmed"] = False  # 初始化为未确认
+    print_process_progress("需求收集", "（完成）✅")
+    return state
+
+def generate_basic_setting(state: NovelCreationState) -> NovelCreationState:
+    """节点2：根据用户需求生成小说基础设定（标题/角色/情节）"""
+    print_process_progress("设定生成", "（开始生成题目/角色/情节）")
+    
+    # 定义基础设定生成的提示词模板，约束输出格式和内容要求
+    prompt = PromptTemplate(
+        template="""
+        请根据用户需求生成小说基础设定，要求：
+        1. 小说题目：1-2个备选，简洁有吸引力
+        2. 主要角色：至少3个，格式为「姓名：性格描述」
+        3. 情节概述：100-200字，清晰说明故事整体走向
+        
+        用户需求：{user_requirement}
+        
+        输出格式（严格遵循）：
+        题目：xxx
+        主要角色：
+        - 姓名1：性格描述1
+        - 姓名2：性格描述2
+        - 姓名3：性格描述3
+        情节概述：xxx
+        """,
+        input_variables=["user_requirement"]
+    )
+    
+    # 调用大模型生成基础设定内容
+    response = llm.invoke(prompt.format(user_requirement=state["user_requirement"]))
+    setting_content = response.content.strip()
+    
+    # 解析模型输出，提取标题、角色、情节信息并更新状态
+    lines = setting_content.split("\n")
+    state["main_characters"] = []
+    for line in lines:
+        if line.startswith("题目："):
+            state["novel_title"] = line.replace("题目：", "").strip()
+        elif line.startswith("主要角色："):
+            continue
+        elif line.startswith("- "):
+            name, desc = line.replace("- ", "").split("：", 1)
+            state["main_characters"].append({"姓名": name, "性格描述": desc})
+        elif line.startswith("情节概述："):
+            state["plot_overview"] = line.replace("情节概述：", "").strip()
+    
+    # 展示生成的基础设定，供用户审核
+    print("\n===== 生成的小说基础设定 =====")
+    print(f"题目：{state['novel_title']}")
+    print("主要角色：")
+    for char in state["main_characters"]:
+        print(f"- {char['姓名']}：{char['性格描述']}")
+    print(f"情节概述：{state['plot_overview']}")
+    
+    state["current_stage"] = "设定生成"
+    print_process_progress("设定生成", "（完成）✅")
+    return state
+
+def confirm_basic_setting(state: NovelCreationState) -> NovelCreationState:
+    """节点3：人工审核确认基础设定（支持修改后重新生成）"""
+    print("\n===== ⚠️ 人工审核 - 基础设定确认环节 =====")
+    confirm = input("是否确认以上基础设定？（确认请输入y，需修改请输入n并说明修改内容）：")
+    
+    if confirm.lower() == "y":
+        # 用户确认设定，标记状态为已确认
+        state["is_setting_confirmed"] = True
+        print("✅ 基础设定已确认，进入下一阶段！")
+    else:
+        # 用户需要修改，接收修改需求并重新生成设定
+        modify_content = input("请输入你的修改需求（如：修改角色名/调整情节/更换题目）：")
+        print("🔄 正在根据你的需求修改基础设定...")
+        
+        # 定义修改后的提示词模板，基于原始需求+修改需求重新生成
+        prompt = PromptTemplate(
+            template="""
+            请根据用户的原始需求和修改需求，更新小说基础设定：
+            原始需求：{user_requirement}
+            修改需求：{modify_content}
+            输出格式（严格遵循）：
+            题目：xxx
+            主要角色：
+            - 姓名1：性格描述1
+            - 姓名2：性格描述2
+            - 姓名3：性格描述3
+            情节概述：xxx
+            """,
+            input_variables=["user_requirement", "modify_content"]
+        )
+        
+        # 调用模型重新生成修改后的设定
+        response = llm.invoke(prompt.format(
+            user_requirement=state["user_requirement"],
+            modify_content=modify_content
+        ))
+        setting_content = response.content.strip()
+        
+        # 重新解析修改后的设定内容
+        lines = setting_content.split("\n")
+        state["main_characters"] = []
+        for line in lines:
+            if line.startswith("题目："):
+                state["novel_title"] = line.replace("题目：", "").strip()
+            elif line.startswith("主要角色："):
+                continue
+            elif line.startswith("- "):
+                name, desc = line.replace("- ", "").split("：", 1)
+                state["main_characters"].append({"姓名": name, "性格描述": desc})
+            elif line.startswith("情节概述："):
+                state["plot_overview"] = line.replace("情节概述：", "").strip()
+        
+        # 展示修改后的设定，再次确认
+        print("\n===== 修改后的基础设定 =====")
+        print(f"题目：{state['novel_title']}")
+        print("主要角色：")
+        for char in state["main_characters"]:
+            print(f"- {char['姓名']}：{char['性格描述']}")
+        print(f"情节概述：{state['plot_overview']}")
+        
+        re_confirm = input("是否确认修改后的设定？（y/n）：")
+        if re_confirm.lower() == "y":
+            state["is_setting_confirmed"] = True
+            print("✅ 基础设定已确认！")
+        else:
+            print("❌ 未确认，将重新生成基础设定。")
+    
+    return state
+
+def generate_outline_chapter(state: NovelCreationState) -> NovelCreationState:
+    """节点4：基于已确认的基础设定生成小说大纲与章节结构"""
+    # 校验前置条件：基础设定未确认则无法生成大纲
+    if not state.get("is_setting_confirmed", False):
+        raise ValueError("❌ 基础设定未确认，无法生成大纲！")
+    
+    print_process_progress("大纲生成", "（开始生成大纲/章节结构）")
+    
+    # 定义大纲生成提示词模板，约束大纲和章节的内容要求
+    prompt = PromptTemplate(
+        template="""
+        请根据已确认的小说基础设定，生成：
+        1. 小说整体大纲：200-300字，清晰说明故事的开端、发展、高潮、结局
+        2. 章节结构：至少8章，格式为「章节X：章节情节概述（1-2句话）」，章节间逻辑连贯
+        
+        基础设定：
+        题目：{novel_title}
+        主要角色：{main_characters}
+        情节概述：{plot_overview}
+        
+        输出格式（严格遵循）：
+        整体大纲：xxx
+        章节结构：
+        - 章节1：xxx
+        - 章节2：xxx
+        ...
+        """,
+        input_variables=["novel_title", "main_characters", "plot_overview"]
+    )
+    
+    # 格式化角色信息，适配提示词输入格式
+    char_str = "\n".join([f"{c['姓名']}：{c['性格描述']}" for c in state["main_characters"]])
+    
+    # 调用模型生成大纲和章节结构
+    response = llm.invoke(prompt.format(
+        novel_title=state["novel_title"],
+        main_characters=char_str,
+        plot_overview=state["plot_overview"]
+    ))
+    outline_content = response.content.strip()
+    
+    # 解析模型输出，提取大纲和章节信息
+    lines = outline_content.split("\n")
+    state["chapter_structure"] = []
+    for line in lines:
+        if line.startswith("整体大纲："):
+            state["novel_outline"] = line.replace("整体大纲：", "").strip()
+        elif line.startswith("章节结构："):
+            continue
+        elif line.startswith("- 章节"):
+            chapter_name, chapter_desc = line.replace("- ", "").split("：", 1)
+            state["chapter_structure"].append({"章节名": chapter_name, "情节概述": chapter_desc})
+    
+    # 展示生成的大纲和章节结构，供用户审核
+    print("\n===== 生成的小说大纲与章节结构 =====")
+    print(f"整体大纲：{state['novel_outline']}")
+    print("章节结构：")
+    for chapter in state["chapter_structure"]:
+        print(f"- {chapter['章节名']}：{chapter['情节概述']}")
+    
+    state["current_stage"] = "大纲生成"
+    print_process_progress("大纲生成", "（完成）✅")
+    return state
+
+def confirm_outline_chapter(state: NovelCreationState) -> NovelCreationState:
+    """节点5：人工审核确认大纲与章节结构（支持修改后重新生成）"""
+    print("\n===== ⚠️ 人工审核 - 大纲与章节结构确认环节 =====")
+    confirm = input("是否确认以上大纲与章节结构？（确认请输入y，需修改请输入n并说明修改内容）：")
+    
+    if confirm.lower() == "y":
+        # 用户确认大纲，标记状态为已确认
+        state["is_outline_confirmed"] = True
+        print("✅ 大纲与章节结构已确认，进入小说生成阶段！")
+    else:
+        # 用户需要修改，接收修改需求并重新生成大纲
+        modify_content = input("请输入你的修改需求（如：调整章节顺序/修改某章情节/增减章节数）：")
+        print("🔄 正在根据你的需求修改大纲与章节结构...")
+        
+        # 格式化角色信息
+        char_str = "\n".join([f"{c['姓名']}：{c['性格描述']}" for c in state["main_characters"]])
+        # 定义修改后的大纲生成提示词模板
+        prompt = PromptTemplate(
+            template="""
+            请根据已确认的基础设定和用户修改需求，更新小说大纲与章节结构：
+            基础设定：
+            题目：{novel_title}
+            主要角色：{main_characters}
+            情节概述：{plot_overview}
+            修改需求：{modify_content}
+            
+            输出格式（严格遵循）：
+            整体大纲：xxx
+            章节结构：
+            - 章节1：xxx
+            - 章节2：xxx
+            ...
+            """,
+            input_variables=["novel_title", "main_characters", "plot_overview", "modify_content"]
+        )
+        
+        # 调用模型重新生成修改后的大纲
+        response = llm.invoke(prompt.format(
+            novel_title=state["novel_title"],
+            main_characters=char_str,
+            plot_overview=state["plot_overview"],
+            modify_content=modify_content
+        ))
+        outline_content = response.content.strip()
+        
+        # 重新解析修改后的大纲和章节结构
+        lines = outline_content.split("\n")
+        state["novel_outline"] = None
+        state["chapter_structure"] = []
+        for line in lines:
+            if line.startswith("整体大纲："):
+                state["novel_outline"] = line.replace("整体大纲：", "").strip()
+            elif line.startswith("章节结构："):
+                continue
+            elif line.startswith("- 章节"):
+                chapter_name, chapter_desc = line.replace("- ", "").split("：", 1)
+                state["chapter_structure"].append({"章节名": chapter_name, "情节概述": chapter_desc})
+        
+        # 展示修改后的大纲，再次确认
+        print("\n===== 修改后的大纲与章节结构 =====")
+        print(f"整体大纲：{state['novel_outline']}")
+        print("章节结构：")
+        for chapter in state["chapter_structure"]:
+            print(f"- {chapter['章节名']}：{chapter['情节概述']}")
+        
+        re_confirm = input("是否确认修改后的大纲与章节结构？（y/n）：")
+        if re_confirm.lower() == "y":
+            state["is_outline_confirmed"] = True
+            print("✅ 大纲与章节结构已确认！")
+        else:
+            print("❌ 未确认，将重新生成大纲。")
+    
+    return state
+
+def generate_complete_novel(state: NovelCreationState) -> NovelCreationState:
+    """节点6：基于已确认的大纲逐章生成小说正文（带章节进度监控）"""
+    # 校验前置条件：大纲未确认则无法生成小说正文
+    if not state.get("is_outline_confirmed", False):
+        raise ValueError("❌ 大纲与章节未确认，无法生成小说！")
+    
+    print_process_progress("小说生成", "（开始逐章生成正文）")
+    # 初始化章节生成进度
+    state["chapter_generated_count"] = 0
+    chapter_total = len(state["chapter_structure"])
+    print_chapter_progress(0, chapter_total)
+    
+    # 格式化小说基础信息，供单章生成时使用
+    char_str = "\n".join([f"{c['姓名']}：{c['性格描述']}" for c in state["main_characters"]])
+    novel_basic_info = f"""
+    小说题目：{state['novel_title']}
+    主要角色：{char_str}
+    整体大纲：{state['novel_outline']}
+    """
+    # 初始化小说完整内容，包含标题和核心设定
+    full_novel_content = f"# {state['novel_title']}\n\n## 小说核心设定\n{novel_basic_info.replace('    ', '')}\n\n---\n"
+    
+    # 定义单章正文生成的提示词模板，约束单章内容的格式和质量
+    chapter_prompt = PromptTemplate(
+        template="""
+        请根据小说的核心设定、整体大纲，生成指定章节的正文内容，要求：
+        1. 内容严格遵循该章节的情节概述，细节丰富，符合小说创作风格
+        2. 角色性格与基础设定一致，对话自然，动作、心理描写贴合角色
+        3. 章节开头标注章节名，结尾做轻微过渡，为下一章铺垫
+        4. 单章字数控制在200-400字，语言流畅，情节连贯
+        
+        小说核心设定：{novel_basic_info}
+        当前生成章节：{chapter_name}
+        本章节情节概述：{chapter_desc}
+        已生成章节数：{generated_chapter_num}/{total_chapter}
+        
+        输出格式：直接输出生成的章节正文，无需额外说明
+        """,
+        input_variables=["novel_basic_info", "chapter_name", "chapter_desc", "generated_chapter_num", "total_chapter"]
+    )
+    
+    # 逐章生成小说正文
+    for idx, chapter in enumerate(state["chapter_structure"], 1):
+        chapter_name = chapter["章节名"]
+        chapter_desc = chapter["情节概述"]
+        print(f"\n🔨 【生成中】{chapter_name}...")
+        
+        # 调用模型生成单章正文
+        chapter_response = llm.invoke(chapter_prompt.format(
+            novel_basic_info=novel_basic_info,
+            chapter_name=chapter_name,
+            chapter_desc=chapter_desc,
+            generated_chapter_num=idx,
+            total_chapter=chapter_total
+        ))
+        chapter_content = chapter_response.content.strip()
+        
+        # 拼接单章内容到完整小说中
+        full_novel_content += f"\n{chapter_content}\n\n---\n"
+        # 更新章节生成进度
+        state["chapter_generated_count"] = idx
+        print_chapter_progress(idx, chapter_total)
+        print(f"✅ 【生成完成】{chapter_name}：\n{chapter_content}\n" + "-"*50)
+    
+    # 补充小说完本信息，完成最终内容拼接
+    full_novel_content += f"\n### 小说完本（总章节数：{chapter_total} | 创作基于用户需求：{state['user_requirement']}）"
+    state["complete_novel"] = full_novel_content
+    state["current_stage"] = "小说生成"
+    
+    # 展示最终进度
+    print_process_progress("小说生成", "（完成）✅")
+    print(f"\n🎉 逐章生成完成！小说共{chapter_total}章，总字数≥2000字")
+    return state
+
+# ===================== 6. 构建LangGraph工作流 =====================
+def build_novel_creation_graph() -> CompiledStateGraph:
+    """构建带人工审核中断的小说创作工作流"""
+    # 1. 初始化状态图，绑定自定义的状态数据结构
+    graph = StateGraph(NovelCreationState)
+    
+    # 2. 向状态图中添加所有业务节点
+    graph.add_node("get_user_input", get_user_input)               # 需求收集节点
+    graph.add_node("generate_basic_setting", generate_basic_setting) # 基础设定生成节点
+    graph.add_node("confirm_basic_setting", confirm_basic_setting)   # 基础设定确认节点
+    graph.add_node("generate_outline_chapter", generate_outline_chapter) # 大纲生成节点
+    graph.add_node("confirm_outline_chapter", confirm_outline_chapter)   # 大纲确认节点
+    graph.add_node("generate_complete_novel", generate_complete_novel)   # 小说生成节点
+    
+    # 3. 定义节点执行顺序（核心工作流逻辑）
+    graph.set_entry_point("get_user_input")  # 设置流程入口节点
+    graph.add_edge("get_user_input", "generate_basic_setting")  # 需求收集→设定生成
+    graph.add_edge("generate_basic_setting", "confirm_basic_setting")  # 设定生成→设定确认
+    
+    # 4. 定义设定确认后的分支逻辑：确认则生成大纲，未确认则重新生成设定
+    def setting_confirm_router(state: NovelCreationState) -> str:
+        return "generate_outline_chapter" if state.get("is_setting_confirmed", False) else "generate_basic_setting"
+    graph.add_conditional_edges("confirm_basic_setting", setting_confirm_router)
+    
+    # 5. 大纲生成后跳转至大纲确认节点
+    graph.add_edge("generate_outline_chapter", "confirm_outline_chapter")
+    
+    # 6. 定义大纲确认后的分支逻辑：确认则生成小说，未确认则重新生成大纲
+    def outline_confirm_router(state: NovelCreationState) -> str:
+        return "generate_complete_novel" if state.get("is_outline_confirmed", False) else "generate_outline_chapter"
+    graph.add_conditional_edges("confirm_outline_chapter", outline_confirm_router)
+    
+    # 7. 小说生成完成后结束流程
+    graph.add_edge("generate_complete_novel", END)
+    
+    # 8. 配置检查点存储：使用内存存储工作流状态，支持中断后恢复
+    checkpointer = MemorySaver()
+    # 9. 编译工作流：配置中断点（在人工审核节点前暂停，等待用户输入）
+    compiled_graph = graph.compile(
+        checkpointer=checkpointer,
+        interrupt_before=["confirm_basic_setting", "confirm_outline_chapter"]  # 审核节点前中断
+    )
+    
+    return compiled_graph
+
+# ===================== 7. 运行小说创作流程 =====================
+if __name__ == "__main__":
+    # 1. 构建工作流实例
+    novel_graph = build_novel_creation_graph()
+    
+    # 2. 配置线程ID（用于区分不同的创作流程，每个流程独立存储状态）
+    thread_id = "novel_creation_enterprise_001"
+    config = {"configurable": {"thread_id": thread_id}}
+    
+    # 3. 初始化工作流状态
+    initial_state: NovelCreationState = {
+        "user_requirement": "",
+        "current_stage": "初始",
+        "chapter_generated_count": 0
+    }
+
+    print("🚀 小说创作助手启动")
+    print("==============================================")
+
+    # 核心逻辑：处理工作流中断与恢复
+    # 第一次启动：执行从入口节点到第一个中断点的流程
+    novel_graph.invoke(initial_state, config=config)
+
+    while True:
+        # 获取当前线程的状态快照，判断流程是否中断
+        state_snapshot = novel_graph.get_state(config)
+        
+        # 如果没有下一个待执行节点，说明流程已完成，退出循环
+        if not state_snapshot.next:
+            print("\n🎉 所有流程已完成！")
+            break
+        
+        # 流程中断在某个审核节点前，提示用户并恢复执行
+        target_node = state_snapshot.next[0]
+        print(f"\n--- ⏸️ 流程在节点 [{target_node}] 处等待人工干预 ---")
+        
+        # 恢复执行：传入None表示从上一个检查点继续，触发人工审核节点的输入交互
+        novel_graph.invoke(None, config=config)
+
+    # 4. 获取最终生成结果并保存到文件
+    final_state = novel_graph.get_state(config).values
+    if "complete_novel" in final_state and final_state["complete_novel"]:
+        filename = "novel_final_output.txt"
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write(final_state["complete_novel"])
+        print(f"\n📁 完整小说已保存到: {filename}")
+    else:
+        print("\n⚠️ 流程未能生成完整内容。")
+```
+
+【学习提示】
+
+测试注意事项：
+
+- 运行代码后，严格按照提示输入（用户需求、审核结果），不要输入多余内容，避免程序异常；
+- 测试完成后，可查看当前目录下的novel_final_output.txt文件，查看保存的小说内容。
+
+### 7.4.6 实践总结与拓展思考
+
+恭喜大家！完成了本次综合实践，成功用langgraph实现了智能体小说创作助手。现在，我们回头梳理一下，本次实践用到了哪些前2章的知识点，加深大家的理解：
+
+#### 1. 知识点回顾
+
+- 节点（Node）：我们定义的6个节点，本质上就是langgraph的“执行单元”，与第X章“节点的定义与使用”完全对应；
+- 状态（State）：NovelCreationState类，对应第X章“状态管理”，实现了节点间的数据结构化传递，避免了数据混乱；
+- 图的编译与运行：StateGraph的创建、编译、run方法，对应第X章“图的构建与运行”，是将所有组件串联起来的关键。
+
+#### 2. 实践反思
+
+大家在测试过程中，可能会遇到2个常见问题，这里总结一下解决方案，帮助大家后续规避：
+
+- 问题1：LLM生成格式错误，导致JSON解析失败——解决方案：优化提示词，明确要求LLM输出严格的JSON格式，同时添加异常处理，给默认值；
+- 问题2：节点流转异常，比如审核不通过后，没有返回LLM初始生成节点——解决方案：检查条件分支边的判断函数和分支映射，确保返回的分支标识与branch_map中的key一致（比如audit_result必须是"pass"/"reject"，不能是其他值）。
+
+### 7.4.7 实践任务
+
+为了确保大家真正掌握本次实践的知识点，布置以下必做任务，大家课后完成，下节课我们将抽查并讲解：
+
+1. 完整运行本次实践的所有代码，完成一次小说生成，保存XXXX.txt文件；
+2. 修改“LLM初始生成节点”的提示词，让LLM生成3个以上角色，重新运行流程，观察修改后的效果；
+3. 思考并记录：本次实践中，langgraph的状态管理和条件分支，分别解决了什么问题？（不少于100字）。
+
+最后，提醒大家：本次实践的核心是“掌握langgraph框架”，小说生成的质量不是重点。大家在动手过程中，一定要多思考“每个组件对应什么知识点”“为什么要这么设计节点和状态”，只有这样，才能真正理解langgraph的核心思想。
+
+### 7.4.8 深度思考
+
+为什么在综合实践的案例中，等待用户审核要用Interrupts机制？使用这种机制的好处是什么？如果是企业级应用，多个用户调用智能体的时候怎么保证不同任务中断后能继续顺利启动？
+
+上面的问题没有标准答案，每个人有不同见解~
+
+好啦，以上就是本节的全部内容，祝大家学习愉快
 

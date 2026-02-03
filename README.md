@@ -58,7 +58,7 @@
 | [第五章 课程中期综合实践：智能体应用设计与实现](./docs/chapter5.md) | 中期综合实践 | ✅    |
 | <strong>第三部分：LangGraph组件与实战</strong> |  |  |
 | [第六章 LangGraph基础：有状态工作流与核心概念实操](./docs/chapter6.md) | 有状态工作流、节点、边、状态管理 | ✅    |
-| [第七章 LangGraph进阶：多智能体协作与复杂流程管控](./docs/chapter7.md) | 多智能体协作、复杂流程管控 | 🚧    |
+| [第七章 LangGraph进阶：多智能体协作与复杂流程管控](./docs/chapter7.md) | 多智能体协作、复杂流程管控 | ✅    |
 | [第八章 综合实战：构建“谁是卧底”游戏智能体](./docs/chapter8.md) | 综合实战 | 🚧    |
 | <strong>第四部分：工程化应用技巧</strong> |  |  |
 | [第九章 Skills在lang系列框架中的应用](./docs/chapter9.md) | Skills应用 | 🚧    |
