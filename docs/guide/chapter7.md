@@ -16,7 +16,7 @@ pip install langgraph
 # 注意：LangGraph v1.0.0+ 接口有较大更新，旧版本代码需修改，本章全程适配新版本
 ```
 
-![7-1](..\src\img\7-1.gif)
+![7-1](/img/7-1.gif)
 
 
 
