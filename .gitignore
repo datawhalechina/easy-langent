@@ -1,2 +1,5 @@
 .env
 test.py
+
+docs/.vitepress/dist
+docs/.vitepress/cache
