@@ -10,9 +10,8 @@
 
 [![GitHub stars](https://img.shields.io/github/stars/datawhalechina/easy-langent?style=flat-square)](https://github.com/datawhalechina/easy-langent/stargazers) [![GitHub forks](https://img.shields.io/github/forks/datawhalechina/easy-langent?style=flat-square)](https://github.com/datawhalechina/easy-langent/network/members) [![GitHub issues](https://img.shields.io/github/issues/datawhalechina/easy-langent?style=flat-square)](https://github.com/datawhalechina/easy-langent/issues) [![GitHub license](https://img.shields.io/github/license/datawhalechina/easy-langent?style=flat-square)](https://github.com/datawhalechina/easy-langent/blob/main/LICENSE)
 
-📚 在线阅读地址 (正在筹备，尽情期待...)
+📚 [在线阅读地址](https://datawhalechina.github.io/easy-langent/)
 
-📚 简单的lang框架智能体开发实践教程
 
 </div>
 
