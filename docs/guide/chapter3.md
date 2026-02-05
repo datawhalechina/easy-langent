@@ -40,7 +40,7 @@ Go Go Go ，我们就出发吧！
 
 LangChain提供了多种Memory实现，适用于不同场景。我们重点学最常用的三种——全量记忆、窗口记忆、摘要记忆。它们各有适用场景，学会了就能应对大部分需求。
 
-需要注意的是，LangChain 0.2.x及以上版本推荐使用LCEL（LangChain Execution Logic）架构，通过 `RunnableWithMessageHistory` 结合 `BaseChatMessageHistory` 抽象类实现对话记忆管理，替代后续不支持的 `ConversationChain`。
+需要注意的是，LangChain推荐使用LCEL（LangChain Execution Logic）架构，通过 `RunnableWithMessageHistory` 结合 `BaseChatMessageHistory` 抽象类实现对话记忆管理，替代后续不支持的 `ConversationChain`。
 
 LCEL（LangChain Execution Logic）是 LangChain 0.2+ 的核心执行逻辑，用管道符 `|` 把组件串成流水线，前一个组件的输出自动作为后一个的输入，就像工厂的生产线
 
@@ -57,7 +57,7 @@ session_id 是用户的唯一标识，不同 session_id 的对话记忆相互隔
 【前置准备】所有案例需先完成环境配置：
 
 ```bash
-# 安装完整依赖（新手必执行）
+# 安装完整依赖
 pip install langchain langchain-openai python-dotenv langchain-experimental
 ```
 
