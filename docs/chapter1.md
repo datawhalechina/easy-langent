@@ -36,7 +36,7 @@ LangChain的定位很明确：帮你快速搭建简单到中等复杂度的大�
 具体来说，这几种场景用LangChain就很合适：简单的LLM调用（比如生成文本、翻译）、基础的RAG（让模型结合本地文档回答问题）、单步骤的工具调用（比如让模型调用一次计算器）、快速验证想法（比如想试试“用大模型做错题分析”是否可行，用LangChain能快速做出原型）。
 
 
-LangChain 从 0.1 之后被拆成了三层：
+LangChain 从 1.0 之后被拆成了三层：
 
 | 模块               | 职责                                      |
 | ------------------ | ----------------------------------------- |
@@ -64,6 +64,8 @@ LangChain 的三层架构可以直观地理解为：langchain-core是地基和�
 
 最后再帮大家理清两者的关系，避免混淆：首先是从属关系，LangGraph不是独立于LangChain的，它是LangChain生态的进阶扩展，依赖LangChain的核心组件（比如模型调用、工具这些“积木”），只是在流程管控、状态管理上做了增强；其次是互补关系，简单的任务用LangChain（快、简单），复杂的任务用LangGraph（稳、可控），实际开发中我们经常会把它们融合起来用——用LangChain搭好基础组件，再用LangGraph设计复杂的流程。
 
+![1-1](C:\Users\xiong\Desktop\iii\easy-langent\src\img\1-1.png)
+
 再用一个形象的类比帮大家记住：
 
 - 用LangChain开发，像用积木快速拼一个小房子（简单、快）；
@@ -77,7 +79,7 @@ LangChain 的三层架构可以直观地理解为：langchain-core是地基和�
 
 ### 1.3.1 环境要求
 
-1. Python版本：3.8及以上（推荐3.10，兼容性最好）；
+1. Python版本：3.10及以上（推荐3.10，兼容性最好）；
 2. 网络：能访问互联网（需要下载依赖、调用大模型API）；
 3. 编辑器：推荐PyCharm（专业版/社区版均可）或VS Code（需安装Python插件）。
 
@@ -112,7 +114,7 @@ source langent-env/bin/activate
 
 ```python
 # 1. 创建虚拟环境（建议 Python 3.10）
-conda create -n langent-env python=3.11 -y
+conda create -n langent-env python=3.10 -y
 
 # 2. 激活虚拟环境
 conda activate langent-env
@@ -157,10 +159,12 @@ print("LangChain版本：", langchain.__version__)
 print("LangGraph版本：", version.__version__)
 print("OpenAI版本：", openai.__version__)
 
-LangChain版本： 1.2.0
+LangChain版本： 1.2.3
 LangGraph版本： 1.0.5
-OpenAI版本： 2.14.0
+OpenAI版本： 2.15.0
 ```
+
+> **注意：**LangChain 和 LangGraph 必须安装**1.0.0以后**的版本，1.0.0以前的版本与1.0.0以后的版本不兼容，会对学习产生比较大的影响！！！
 
 **步骤3：配置API密钥**
 
@@ -175,6 +179,10 @@ chatgpt官网：https://chatgpt.com/
 通过模型的官网获取api，（注意：密钥只显示一次，保存好，不要泄露给别人）
 
 > 本教程选择的是deepseek官网的api，可以根据每个人的不同选择不同的底座模型
+
+在项目文件夹（easy-langent）中新建一个文件，**命名为“.env”（注意前面有个点）**
+
+用编辑器打开**.env文件**，写入以下内容（替换成你的API密钥）：
 
 ```python
 # 1. 在项目文件夹（easy-langent）中新建一个文件，命名为“.env”（注意前面有个点）
@@ -254,7 +262,7 @@ print(response.content)
 
 ### 1.4.2 LangGraph案例：基础工作流执行
 
-功能：实现一个简单的“两步工作流”——第一步生成学习建议，第二步对建议进行精简（不超过30字）。
+功能：实现一个简单的“两步工作流”——第一步生成学习建议，第二步对建议进行精简。
 
 ```python
 # 1. 导入需要的模块
