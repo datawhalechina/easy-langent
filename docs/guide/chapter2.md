@@ -24,6 +24,10 @@ conda activate langent-env
 
 - API密钥配置正确，能正常调用OpenAI模型。
 
+在项目文件夹（easy-langent）中新建一个文件，**命名为“.env”（注意前面有个点）**
+
+用编辑器打开**.env文件**，写入以下内容（替换成你的API密钥）：
+
 做好这些准备，我们就出发吧！
 
 ## 2.1 模型调用（ChatOpenAI）：统一接口适配不同大模型
@@ -121,59 +125,19 @@ LangChain是一个用于开发大语言模型应用的框架。它通过模块�
 
 #### （2）调用OpenAI的LLM（文本生成场景）
 
-如果只是简单的文本生成，比如生成一段学习计划，可以用LLM。代码如下，注意和ChatModel的区别：
+如果只是简单的文本生成，比如生成一段学习计划，可以用LLM。
 
 > 现在的大模型厂商，已经不再区分「生成模型 / 对话模型」了，只有一种模型：能接收结构化消息、生成内容的模型。但实际上对话和文本生成还是有区别的。
 
-```python
-# 导入LLM接口
-from langchain_openai import OpenAI
-from dotenv import load_dotenv
-import os 
+需要注意的是`deepseek-chat`只支持 Chat Completions 接口（对应 LangChain 的`ChatOpenAI`类），不支持传统的 Completions 接口（对应`OpenAI`类）
 
-load_dotenv()
-
-API_KEY = os.getenv("API_KEY")
-BASE_URL = "https://api.deepseek.com"
-
-if not API_KEY:
-    raise ValueError("未检测到 API_KEY，请检查 .env 文件是否配置正确")
-
-# 1. 初始化对话模型
-# 不管是哪个厂商的ChatModel，初始化参数都类似（model、temperature等）
-llm = ChatOpenAI(
-    api_key=API_KEY,
-    base_url=BASE_URL,
-    model="deepseek-chat",  # 选择对话模型
-    temperature=0.3,        # 随机性：0-1，越小越严谨，越大越有创造力
-    max_tokens=200          # 最大生成 tokens 数，避免生成过长内容
-)
-
-# 2. 构造提示文本（直接是字符串，不用消息列表）
-prompt = "给高校学生写一段100字左右的LangChain学习计划，分3个小步骤。"
-
-# 3. 调用模型（同样用invoke()方法，统一接口）
-result = llm.invoke([
-    HumanMessage(content=prompt)
-])
-
-# 4. 输出结果（LLM直接返回字符串，不用取content属性）
-print("LLM回复：")
-print(result)
-```
-
-运行结果示例：
-
-```
-LLM回复：
-1. 基础阶段：熟悉LangChain核心组件（模型调用、提示词模板），跑通基础案例；
-2. 实操阶段：用“提示词模板+记忆”组件搭建简单对话机器人，掌握组件组合逻辑；
-3. 进阶阶段：学习工具调用基础，开发能调用简单工具的应用，深化组件使用理解。
-```
+这里了解即可，无需使用代码实践，本节的后续案例也都是会调用对话模型去完成~
 
 #### （3）快速切换到Hugging Face模型
 
 重点来了！因为LangChain提供了统一接口，我们想切换到Hugging Face的开源模型，只需要修改“初始化模型”的部分，其他代码基本不变。
+
+> 这里了解即可，无需大家去实践~
 
 ```python
 # 先安装Hugging Face相关依赖（终端执行）
@@ -230,7 +194,7 @@ PromptTemplate就是帮我们把“固定的提示文本”和“动态的参数
 
 ```python
 # 导入PromptTemplate
-from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
 from langchain_openai import ChatOpenAI
 from dotenv import load_dotenv
 import os 
@@ -306,7 +270,7 @@ print(result.content)
 
 ```python
 # 导入必要的模板类
-from langchain.prompts import FewShotPromptTemplate, PromptTemplate
+from langchain_core.prompts import FewShotPromptTemplate, PromptTemplate
 from langchain_openai import ChatOpenAI
 from dotenv import load_dotenv
 import os 
@@ -421,7 +385,8 @@ LangChain提供ExampleSelector组件，能根据输入的动态参数（如主�
 
 ```python
 # 导入工程化所需组件
-from langchain.prompts import FewShotPromptTemplate, PromptTemplate, LengthBasedExampleSelector
+from langchain_core.prompts import FewShotPromptTemplate, PromptTemplate
+from langchain_core.example_selectors.length_based import LengthBasedExampleSelector
 from langchain_openai import ChatOpenAI
 from dotenv import load_dotenv
 import os
@@ -509,18 +474,23 @@ print(result_hard.content)
 - 性能优化：控制示例总长度，结合模型token限制设计max_length参数
 - 版本控制：对示例文件进行版本管理，便于回溯与迭代
 
-## 2.3 输出解析（OutputParser）：让输出更可控
+## 2.3 输出解析：让输出更可控
 
-通过PromptTemplate和FewShotPromptTemplate，我们实现了“规范输入”；而OutputParser的核心作用是“规范输出”——将大模型返回的非结构化文本（如自由段落）转化为结构化数据（如列表、字典、自定义对象），方便后续代码直接处理（如存储到数据库、作为其他函数的输入）。
+通过 PromptTemplate 和 FewShotPromptTemplate，我们解决了**“如何规范输入”**的问题；而输出解析（Output Parsing / Output Control）要解决的是另一件事：
 
-### 2.3.1 为什么需要OutputParser？
+> 如何让大模型的输出，能被程序稳定、可靠地直接使用。
+
+在工程实践中，大模型天然倾向于输出**自由文本**，而业务系统需要的是**结构化数据**（列表、字典、对象）。
+ 输出解析层，正是连接这两者的关键桥梁。
+
+### 2.3.1 为什么需要输出解析层？
 
 没有解析器时，大模型输出存在两大问题：
 
 - 格式不固定：同一需求可能返回段落、分点、表格等多种格式，代码难以适配
 - 无法直接使用：非结构化文本需要手动写正则、字符串分割等逻辑提取信息，开发效率低且易出错
 
-OutputParser的核心价值对比：
+输出解析层的核心价值对比：
 
 | 场景需求           | 无解析器（原始输出）                              | 有解析器（结构化输出）                                       |
 | :----------------- | :------------------------------------------------ | :----------------------------------------------------------- |
@@ -528,32 +498,31 @@ OutputParser的核心价值对比：
 | 生成用户信息       | “用户叫张三，25岁，手机号138xxxx1234”             | {"name":"张三","age":25,"phone":"138xxxx1234"}               |
 | 分析订单状态       | “订单号A123已发货，预计3天到；订单B456还在待付款” | [{"orderId":"A123","status":"已发货","estimate":"3天"},{"orderId":"B456","status":"待付款"}] |
 
-### 2.3.2 核心工作原理
+### 2.3.2 输出解析层实践案例
 
-OutputParser本质是“格式引导 + 结构化转换”的组合，核心流程分3步：
+#### 2.3.2.1方案1：StrOutputParser
 
-1. 生成格式指令：通过解析器的get_format_instructions()方法，自动生成告诉模型“该输出什么格式”的提示词（无需手动编写）
-2. 嵌入提示模板：将格式指令融入PromptTemplate，让模型按指定格式输出
-3. 解析输出结果：调用解析器的parse()方法，将模型输出的文本转化为结构化数据
+适用场景
 
-关键接口（所有解析器通用）：
+仅需要**纯文本输出**，不要求结构化数据，但希望将大模型输出**统一为标准字符串类型（str）**，以便在 LangChain / LangGraph 中作为稳定的数据节点继续流转。  
+适用于文本总结、简单问答、多智能体发言内容生成、字符串拼接等基础场景。
 
-- get_format_instructions()：生成格式要求提示词，必须嵌入PromptTemplate
-- parse(text)：将原始文本解析为结构化数据（单轮对话常用）
-- parse_with_prompt(text, prompt)：结合原始提示上下文解析（多轮对话常用）
+StrOutputParser 的核心作用**不是清洗文本格式**，也不会主动去除换行或空格，而是：
 
-### 2.3.3 常见OutputParser类型及实践案例
+> **将 LLM 返回的 `AIMessage` 对象，统一转换为纯字符串（str）**
 
-LangChain提供多种开箱即用的解析器，覆盖大部分工程场景，以下是3种最常用类型的实操案例：
+从而解决 LangChain 1.0.0 以后最常见的工程问题：
 
-#### 2.3.3.1 案例1：逗号分隔列表解析器（CommaSeparatedListOutputParser）
+- 避免在业务代码中频繁处理 `AIMessage.content`
+- 防止消息对象混入 LangGraph 的状态（State）中，污染状态流
+- 让模型输出可以直接参与后续字符串处理、条件判断或二次解析
+- 作为更复杂解析流程（如 JSON 解析、规则解析）的**底座组件**
 
-适用场景：需要将输出转化为列表（如关键词列表、选项列表），核心代码：
+在 LangChain 1.0.0 以后，StrOutputParser 是**兼容性最好、稳定性最高、使用成本最低**的输出解析方案，适合作为所有复杂系统的起点。
 
 ```python
-from langchain_core.output_parsers import CommaSeparatedListOutputParser
-from langchain.prompts import PromptTemplate
 from langchain_openai import ChatOpenAI
+from langchain_core.output_parsers import StrOutputParser
 from dotenv import load_dotenv
 import os
 
@@ -562,235 +531,7 @@ load_dotenv()
 API_KEY = os.getenv("API_KEY")
 BASE_URL = "https://api.deepseek.com"
 
-chat_model = ChatOpenAI(
-    api_key=API_KEY,
-    base_url=BASE_URL,
-    model="deepseek-chat",
-    temperature=0.3
-)
-
-# 2. 创建列表解析器
-parser = CommaSeparatedListOutputParser()
-
-# 3. 获取格式指令并嵌入提示模板
-format_instructions = parser.get_format_instructions()
-prompt = PromptTemplate(
-    template="请列举3个常见的{subject}相关工具。{format_instructions}",
-    input_variables=["subject"],
-    partial_variables={"format_instructions": format_instructions}  # 嵌入格式指令
-)
-
-# 4. 生成提示词并调用模型
-formatted_prompt = prompt.format(subject="LangChain开发")
-result = chat_model.invoke([{"role": "user", "content": formatted_prompt}])
-
-# 5. 解析输出（转化为Python列表）
-parsed_result = parser.parse(result.content)
-print("原始输出：")
-print(result.content)
-print("\n解析后的列表：")
-print(parsed_result)
-print("\n列表元素类型：", type(parsed_result[0]))  # 可直接用于循环、筛选等操作
-```
-
-运行结果示例：
-
-```
-原始输出：
-LangChain, LangSmith, LangServe
-
-解析后的列表：
-['LangChain', 'LangSmith', 'LangServe']
-
-列表元素类型： <class 'str'>
-```
-
-#### 2.3.3.2 案例2：结构化输出解析器（StructuredOutputParser）
-
-适用场景：需要复杂结构化数据（如含多个字段的对象），支持通过Pydantic定义数据结构，核心代码：
-
-```python
-from langchain.output_parsers import StructuredOutputParser, ResponseSchema
-from langchain.prompts import PromptTemplate
-from langchain_openai import ChatOpenAI
-from dotenv import load_dotenv
-import os
-
-# 1. 环境初始化
-load_dotenv()
-API_KEY = os.getenv("API_KEY")
-BASE_URL = "https://api.deepseek.com"
-
-chat_model = ChatOpenAI(
-    api_key=API_KEY,
-    base_url=BASE_URL,
-    model="deepseek-chat",
-    temperature=0.3
-)
-
-# 2. 定义响应 schema（结构化数据的字段说明）
-response_schemas = [
-    ResponseSchema(name="tool_name", description="工具名称"),
-    ResponseSchema(name="function", description="核心功能，用30字以内描述"),
-    ResponseSchema(name="usage_scenario", description="适用场景，分点列出"),
-    ResponseSchema(name="difficulty", description="学习难度，可选值：简单、中等、复杂")
-]
-
-# 3. 创建结构化解析器
-parser = StructuredOutputParser.from_response_schemas(response_schemas)
-format_instructions = parser.get_format_instructions()
-
-# 4. 构建提示模板
-prompt = PromptTemplate(
-    template="请介绍1个LangChain开发常用工具。{format_instructions}",
-    input_variables=[],
-    partial_variables={"format_instructions": format_instructions}
-)
-
-# 5. 调用模型并解析
-formatted_prompt = prompt.format()
-print("输入提示词：")
-print(formatted_prompt)
-result = chat_model.invoke([{"role": "user", "content": formatted_prompt}])
-parsed_result = parser.parse(result.content)
-
-print("原始输出：")
-print(result.content)
-print("\n解析后的结构化数据：")
-print(parsed_result)
-print("\n获取单个字段值：", parsed_result["tool_name"])
-```
-
-运行结果示例：
-
-````
-输入提示词：
-请介绍1个LangChain开发常用工具。The output should be a markdown code snippet formatted in the following schema, including the leading and trailing "```json" and "```":
-
-```json
-{
-        "tool_name": string  // 工具名称
-        "function": string  // 核心功能，用30字以内描述
-        "usage_scenario": string  // 适用场景，分点列出
-        "difficulty": string  // 学习难度，可选值：简单、中等、复杂
-}
-```
-原始输出：
-```json
-{
-        "tool_name": "LangSmith",
-        "function": "用于调试、测试、监控和评估LangChain应用程序的全链路平台。",
-        "usage_scenario": ["开发阶段：追踪和可视化链/代理的调用步骤，调试问题。", "评估阶段：在数据集上测试应用程序，比较不同提示或模型的性能。", "生产阶段：监控应用程序的运行情 况、延迟、成本和异常。"],
-        "difficulty": "中等"
-}
-```
-
-解析后的结构化数据：
-{'tool_name': 'LangSmith', 'function': '用于调试、测试、监控和评估LangChain应用程序的全链路平台。', 'usage_scenario': ['开发阶段：追踪和可视化链/代理的调用步骤，调试问题。', '评 估阶段：在数据集上测试应用程序，比较不同提示或模型的性能。', '生产阶段：监控应用程序的运行情况、延迟、成本和异常。'], 'difficulty': '中等'}
-
-获取单个字段值： LangSmith
-````
-
-#### 2.3.3.3 案例3：自定义解析器（基础实现）
-
-上面的案例2其实可以看到，对模型的约束本质就是在提示词中加入了词语约束，同时是英文描述，这里我们可以自己修改。
-
-如果开箱即用解析器无法满足特殊格式需求（如自定义标记语言、特定规则的文本），核心思路是继承BaseOutputParser实现parse方法：
-
-```python
-from langchain_core.output_parsers import BaseOutputParser
-from langchain.prompts import PromptTemplate
-from langchain_openai import ChatOpenAI
-from dotenv import load_dotenv
-import os
-
-# 1. 自定义解析器：解析格式为「工具名|功能|难度」的文本
-class CustomToolParser(BaseOutputParser):
-    def parse(self, text: str) -> dict:
-        """解析原始文本为字典"""
-        parts = text.strip().split("|")
-        if len(parts) != 3:
-            raise ValueError(f"输出格式错误，需满足「工具名|功能|难度」：{text}")
-        return {
-            "tool_name": parts[0].strip(),
-            "function": parts[1].strip(),
-            "difficulty": parts[2].strip()
-        }
-    
-    def get_format_instructions(self) -> str:
-        """生成格式指令"""
-        return "请严格按照「工具名|功能|难度」的格式输出，例如：LangChain CLI|快速初始化项目|简单"
-
-# 2. 环境初始化
-load_dotenv()
-API_KEY = os.getenv("API_KEY")
-BASE_URL = "https://api.deepseek.com"
-
-chat_model = ChatOpenAI(
-    api_key=API_KEY,
-    base_url=BASE_URL,
-    model="deepseek-chat",
-    temperature=0.3
-)
-
-# 3. 使用自定义解析器
-parser = CustomToolParser()
-prompt = PromptTemplate(
-    template="请介绍1个LangChain开发工具。{format_instructions}",
-    input_variables=[],
-    partial_variables={"format_instructions": parser.get_format_instructions()}
-)
-
-# 4. 调用与解析
-formatted_prompt = prompt.format()
-print("输入提示词：")
-print(formatted_prompt)
-result = chat_model.invoke([{"role": "user", "content": formatted_prompt}])
-parsed_result = parser.parse(result.content)
-
-print("原始输出：")
-print(result.content)
-print("\n自定义解析后的结果：")
-print(parsed_result)
-```
-
-运行结果示例：
-
-```
-输入提示词：
-请介绍1个LangChain开发工具。请严格按照「工具名|功能|难度」的格式输出，例如：LangChain CLI|快速初始化项目|简单
-原始输出：
-LangSmith|全链路应用调试、监控与测试|中等
-
-自定义解析后的结果：
-{'tool_name': 'LangSmith', 'function': '全链路应用调试、监控与测试', 'difficulty': '中等'}
-```
-
-### 2.3.4 OutputParser工程化使用要点
-
-- 格式校验：解析前可添加输出格式校验逻辑，避免模型输出异常导致程序崩溃
-- 错误重试：结合重试机制，当解析失败时自动重新调用模型
-- 性能平衡：复杂结构化解析可能增加模型思考成本，需合理设计schema，避免字段过多
-- 多轮适配：多轮对话中使用parse_with_prompt方法，结合历史提示上下文确保解析准确性
-
-当parse()方法抛出异常时，自动将错误信息和重试要求传入模型，获取符合格式的输出后再次解析，可以使用langchain 自带的RetryOutputParser进行重试
-
-```python
-from langchain.output_parsers import (
-    StructuredOutputParser,
-    ResponseSchema,
-    RetryOutputParser
-)
-from langchain.prompts import PromptTemplate
-from langchain_openai import ChatOpenAI
-from dotenv import load_dotenv
-import os
-
-load_dotenv()
-API_KEY = os.getenv("API_KEY")
-BASE_URL = "https://api.deepseek.com"
-
-# 1. 模型
+# 2. 初始化模型（无需支持原生结构化输出）
 llm = ChatOpenAI(
     api_key=API_KEY,
     base_url=BASE_URL,
@@ -798,44 +539,214 @@ llm = ChatOpenAI(
     temperature=0.3
 )
 
-# 2. 结构化解析器
-schemas = [
-    ResponseSchema(name="tool_name", description="工具名称"),
-    ResponseSchema(name="difficulty", description="学习难度：简单 / 中等 / 复杂"),
-]
-base_parser = StructuredOutputParser.from_response_schemas(schemas)
+# 3. 创建 StrOutputParser
+# 核心作用：将 LLM 返回的 AIMessage 对象，统一转为纯字符串（str）
+parser = StrOutputParser()
 
-# 3. Retry 解析器（关键）
-parser = RetryOutputParser.from_llm(
-    llm=llm,
-    parser=base_parser,
-    max_retries=2
+# 4. 链式调用：模型 → 字符串解析
+chain = llm | parser
+result = chain.invoke("请简要介绍 LangChain 输出解析层的作用")
+
+print("StrOutputParser 解析后的字符串：")
+print(result)
+print("\n解析结果类型：", type(result))  # str
+```
+
+#### 2.3.2.2 案例2： JsonOutputParser
+
+适用场景：快速搭建 Demo，需要简单的键值对结构（无需复杂类型校验），配置简单，无需定义数据模型。核心是自动引导模型输出 JSON 格式，并转化为 Python 字典。
+
+```python
+from langchain_core.output_parsers import JsonOutputParser
+from langchain_core.prompts import PromptTemplate
+from langchain_openai import ChatOpenAI
+from dotenv import load_dotenv
+import os
+
+# 1. 环境与模型初始化（省略，同方案1）
+load_dotenv()
+API_KEY = os.getenv("API_KEY")
+BASE_URL = "https://api.deepseek.com"
+llm = ChatOpenAI(
+    api_key=API_KEY,
+    base_url=BASE_URL,
+    model="deepseek-chat",
+    temperature=0.3
 )
 
-# 4. Prompt（只负责“格式约束”）
+# 2. 创建 JSON 解析器（无需额外配置，默认引导模型输出 JSON）
+parser = JsonOutputParser()
+
+# 3. 构建提示模板（无需手动嵌入格式指令，解析器自动关联）
 prompt = PromptTemplate(
-    template="""
-请介绍 1 个 LangChain 开发工具。
-{format_instructions}
-""",
+    template="请介绍1个LangChain开发工具，输出工具名和核心功能。{format_instructions}",
+    input_variables=[],
+    partial_variables={"format_instructions": parser.get_format_instructions()}
+)
+
+# 4. 链式调用（LangChain ≥1.0.0 推荐方式，自动完成提示+调用+解析）
+chain = prompt | llm | parser
+result = chain.invoke({})  # 无输入参数，传入空字典
+
+print("解析后的JSON（Python字典）：")
+print(result)
+print("获取单个字段：", result["tool_name"])  # 可直接用于业务逻辑
+```
+
+运行结果示例：
+
+````
+解析后的JSON（Python字典）：
+{'tool_name': 'LangSmith', 'core_function': '提供全链路的LLM应用开发、调试、测试、监控和部署平台，支持追踪和可视化LangChain应用的执行过程，帮助开发者分析性能、诊断问题并优化提示词与工作流。'}
+获取单个字段： LangSmith
+````
+
+> ⚠️ 注意：JsonOutputParser 不校验字段类型与枚举值，输出格式“看起来正确”不等于“工程上安全”。
+
+#### 2.3.2.3 案例3：PydanticOutputParser
+
+适用场景：工程化系统、教学场景，需要强类型校验、清晰的字段描述（便于团队协作和维护）。这是 LangChain工程的默认主线方案。核心是通过 Pydantic 定义数据模型，解析器自动校验输出格式，不符合模型的输出会直接报错，提前规避风险。
+
+```python
+from langchain_core.output_parsers import PydanticOutputParser
+from langchain_core.prompts import PromptTemplate
+from langchain_openai import ChatOpenAI
+from pydantic import BaseModel, Field
+from dotenv import load_dotenv
+import os
+
+# 1. 环境与模型初始化
+load_dotenv()
+API_KEY = os.getenv("API_KEY")
+BASE_URL = "https://api.deepseek.com"
+
+llm = ChatOpenAI(
+    api_key=API_KEY,
+    base_url=BASE_URL,
+    model="deepseek-chat",
+    temperature=0.3
+)
+
+# 2. 定义 Pydantic 数据模型
+class ToolInfo(BaseModel):
+    tool_name: str = Field(description="LangChain开发工具的名称，如 LangSmith")
+    function: str = Field(description="工具的核心功能，30字以内")
+    difficulty: str = Field(description="学习难度，仅可选：简单 / 中等 / 复杂")
+
+# 3. 创建解析器
+parser = PydanticOutputParser(pydantic_object=ToolInfo)
+
+# 4. Prompt + Chain
+prompt = PromptTemplate(
+    template="请介绍1个 LangChain 开发工具，严格按照要求输出。\n{format_instructions}",
     input_variables=[],
     partial_variables={
-        "format_instructions": base_parser.get_format_instructions()
+        "format_instructions": parser.get_format_instructions()
     }
 )
 
-# 5. 调用
-prompt_value = prompt.format_prompt()
-response = llm.invoke(prompt_value)
+chain = prompt | llm | parser
+result = chain.invoke({})
 
+print("解析后的结构化数据（Pydantic 模型对象）：")
+print(result)
 
-# 6. 解析（失败会自动 Retry）
-result = parser.parse_with_prompt(
-    response.content,
-    prompt_value
+print("字段校验 difficulty：", result.difficulty)
+
+print("转化为字典：", result.model_dump())
+
+```
+
+运行结果示例：
+
+```
+解析后的结构化数据（Pydantic 模型对象）：
+tool_name='LangSmith' function='用于调试、测试、评估和监控LLM应用的全链路平台' difficulty='中等'
+字段校验 difficulty： 中等
+转化为字典： {'tool_name': 'LangSmith', 'function': '用于调试、测试、评估和监控LLM应用的全链路平台', 'difficulty': '中等'}
+```
+
+### 2.3.3 BaseOutputParser 核心抽象接口（进阶选学）
+
+前面讲解的 StrOutputParser、JsonOutputParser、PydanticOutputParser 等，本质上都是 `BaseOutputParser` 的子类。BaseOutputParser 是 LangChain 中所有输出解析器的**抽象基类**，核心作用是定义统一的解析器接口规范，所有具体解析器都必须实现它的抽象方法，同时它也是我们实现“自定义解析器”的核心基础。
+
+> 本部分难度系数较高，进阶选学~
+
+`BaseOutputParser` 定义了两个核心抽象方法，任何继承它的自定义解析器都**必须实现**：
+
+1. `parse(text: str) -> Any`  
+   - 核心解析逻辑：接收模型原始文本，将其转化为目标格式（字符串、字典、自定义对象等）  
+   - 解析失败需抛出异常（供 `RetryOutputParser` 捕获重试）  
+
+2. `get_format_instructions() -> str`  
+   - 返回模型输出的格式要求提示词  
+   - 可嵌入 `PromptTemplate`，确保模型按指定格式输出  
+
+⚠ 注意：`BaseOutputParser` 是抽象类，不能直接实例化，必须继承并实现抽象方法。
+
+**实操：自定义解析器示例**
+
+适用场景：开箱解析器无法满足需求时（如特殊分隔符、自定义标记等），通过继承 `BaseOutputParser` 实现自定义逻辑。
+
+要求模型按 `"工具名@核心功能@学习难度"` 输出，并解析为字典。
+
+```python
+from langchain_core.output_parsers import BaseOutputParser
+from langchain_core.prompts import PromptTemplate
+from langchain_openai import ChatOpenAI
+from dotenv import load_dotenv
+import os
+
+# 环境初始化
+load_dotenv()
+API_KEY = os.getenv("API_KEY")
+BASE_URL = "https://api.deepseek.com"
+llm = ChatOpenAI(
+    api_key=API_KEY,
+    base_url=BASE_URL,
+    model="deepseek-chat",
+    temperature=0.3
 )
 
+# 自定义解析器
+class CustomToolParser(BaseOutputParser):
+    def parse(self, text: str) -> dict:
+        """将模型输出按 '工具名@核心功能@学习难度' 解析为字典"""
+        text = text.strip().replace("\n", "").replace(" ", "")
+        parts = text.split("@")
+        if len(parts) != 3:
+            raise ValueError(f"输出格式错误！需满足「工具名@核心功能@学习难度」，当前输出：{text}")
+        return {
+            "tool_name": parts[0].strip(),
+            "function": parts[1].strip(),
+            "difficulty": parts[2].strip()
+        }
+
+    def get_format_instructions(self) -> str:
+        """生成提示词，引导模型按自定义格式输出"""
+        return "请严格按照「工具名@核心功能@学习难度」格式输出，不添加多余内容。示例：LangSmith@全链路调试监控@中等"
+
+# 使用解析器
+parser = CustomToolParser()
+prompt = PromptTemplate(
+    template="请介绍1个LangChain开发工具。{format_instructions}",
+    input_variables=[],
+    partial_variables={"format_instructions": parser.get_format_instructions()}
+)
+chain = prompt | llm | parser
+result = chain.invoke({})
+
+print("自定义解析器解析结果：")
 print(result)
+print("解析结果类型：", type(result))
+```
+
+运行结果
+
+```
+自定义解析器解析结果：
+{'tool_name': 'LangFlow', 'function': '可视化编排LangChain组件', 'difficulty': '低'}
+解析结果类型： <class 'dict'>
 ```
 
 ## 2.4 输入控制层核心总结
