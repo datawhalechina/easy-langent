@@ -38,10 +38,8 @@ export default defineConfig({
         ]
       },
       {
-        text: 'deepagents与工程化应用',
+        text: '结语',
         items: [
-          { text: '第九章 Skills在lang系列框架中的应用', link: '/guide/chapter9' },
-          { text: '第十章 deepagents与工程化应用', link: '/guide/chapter10' },
           { text: '结语', link: '/guide/结语' }
         ]
       }
