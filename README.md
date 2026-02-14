@@ -59,7 +59,7 @@
 | [第六章 LangGraph基础：有状态工作流与核心概念实操](./docs/guide/chapter6.md) | 有状态工作流、节点、边、状态管理 | ✅    |
 | [第七章 LangGraph进阶：多智能体协作与复杂流程管控](./docs/guide/chapter7.md) | 多智能体协作、复杂流程管控 | ✅    |
 | [第八章 综合实战：构建"谁是卧底"游戏智能体](./docs/guide/chapter8.md) | 综合实战 | ✅    |
-| [结语](./docs/guide/结语.md)        | 项目总结与展望   | 🚧    |
+| [结语](./docs/guide/结语.md)        | 项目总结与展望   | ✅    |
 
 
 ## ✨核心贡献者
