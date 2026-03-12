@@ -93,6 +93,17 @@
 - 如果你想参与贡献本项目，可以提Pull request，如果提完没有人回复你可以联系[保姆团队](https://github.com/datawhalechina/DOPMC/blob/main/OP.md)的同学进行反馈跟进~
 - 如果你对 Datawhale 很感兴趣并想要发起一个新的项目，请按照[Datawhale开源项目指南](https://github.com/datawhalechina/DOPMC/blob/main/GUIDE.md)进行操作即可~
 
+## 📊 Star History
+
+<div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=datawhalechina/easy-langent&type=Date&theme=dark" />
+  <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=datawhalechina/easy-langent&type=Date" />
+  <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=datawhalechina/easy-langent&type=Date" />
+</picture>
+</div>
+
 ## 🌟关注我们
 
 <div align=center>
