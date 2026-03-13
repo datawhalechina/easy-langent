@@ -13,7 +13,7 @@
 
 ## 1.1 为什么需要LangChain和LangGraph
 
-在正式开始前，先跟大家确认下前置知识——不需要你是Python大神，只要能看懂基础的变量、函数，会用终端输简单命令就行；对大模型有个模糊的概念（比如知道LLM是大语言模型）就足够了，不用深入了解原理。如果这些基础你都具备，那我们可以直接出发；如果有些遗忘也没关系，遇到相关知识点可以去搜索相关的资料，帮你回忆起来。
+在正式开始前，先跟大家确认下前置知识——不需要你是Python大神，只要能看懂基础的变量、函数，会用终端输入简单命令就行；对大模型有个模糊的概念（比如知道LLM是大语言模型）就足够了，不用深入了解原理。如果这些基础你都具备，那我们可以直接出发；如果有些遗忘也没关系，遇到相关知识点可以去搜索相关的资料，帮你回忆起来。
 
 我们先从一个常见的开发场景说起：假设你想做一个“智能论文助手”，功能很简单，就是帮用户总结论文内容、解答论文里的疑问。如果现在没有任何框架，全靠自己写代码，你会发现要解决一堆麻烦事。
 
@@ -124,7 +124,7 @@ conda activate langent-env
 ✅ **激活成功标志**：终端前会出现 `(langent-env)`
 
 ```
-(langent-env) PS C:\Users\xiong\Desktop\easy-langent>
+(langent-env) PS C:\Users\Username\Desktop\easy-langent>
 ```
 
 ⚠️ 注意事项：
@@ -136,9 +136,9 @@ conda activate langent-env
 
 在激活的虚拟环境中，执行以下命令安装LangChain、LangGraph及常用依赖：
 
-```python
+```bash
 # 安装LangChain核心库
-pip install langchain  
+pip install langchain
 # 安装LangGraph
 pip install langgraph
 # 安装OpenAI依赖（用于调用OpenAI模型，我们案例用这个）
@@ -158,7 +158,10 @@ import openai
 print("LangChain版本：", langchain.__version__)
 print("LangGraph版本：", version.__version__)
 print("OpenAI版本：", openai.__version__)
+```
 
+运行结果示例：
+```
 LangChain版本： 1.2.3
 LangGraph版本： 1.0.5
 OpenAI版本： 2.15.0
@@ -183,8 +186,8 @@ OpenAI版本： 2.15.0
 
 用编辑器打开`.env文件`，写入以下内容（替换成你的API密钥）：
 
-```python
-# 1. 在项目文件夹（easy-langent）中新建一个文件，命名为“.env”（注意前面有个点）
+```text
+# 1. 在项目文件夹（easy-langent）中新建一个文件，命名为".env"（注意前面有个点）
 # 2. 用编辑器打开.env文件，写入以下内容（替换成你的API密钥）：
 API_KEY="sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
@@ -274,14 +277,14 @@ from dotenv import load_dotenv
 # 2. 加载API密钥
 load_dotenv()
 
-# 3. 初始化大模型（和LangChain案例一样）
+# 3. 配置 API Key
 API_KEY = os.getenv("API_KEY")
 BASE_URL = "https://api.deepseek.com"
 
 if not API_KEY:
     raise ValueError("未检测到 API_KEY，请检查 .env 文件是否配置正确")
 
-# 4. 初始化大模型
+# 4. 初始化大模型（和LangChain案例一样）
 llm = ChatOpenAI(
     api_key=API_KEY,
     base_url=BASE_URL,
@@ -289,13 +292,13 @@ llm = ChatOpenAI(
     temperature=0.3
 )
 
-# 4. 定义 State
+# 5. 定义 State
 class WorkflowState(TypedDict):
     user_role: str
     original_advice: str
     simplified_advice: str
 
-# 5. 定义节点
+# 6. 定义节点
 def generate_advice(state: WorkflowState):
     prompt = f"给{state['user_role']}写一段50字左右的 AI 学习建议。"
     result = llm.invoke(prompt)
@@ -306,7 +309,7 @@ def simplify_advice(state: WorkflowState):
     result = llm.invoke(prompt)
     return {"simplified_advice": result.content}
 
-# 6. 构建工作流
+# 7. 构建工作流
 workflow = StateGraph(WorkflowState)
 
 workflow.add_node("generate", generate_advice)
@@ -318,10 +321,10 @@ workflow.add_edge("simplify", END)
 
 app = workflow.compile()
 
-# 7. 执行
+# 8. 执行
 result = app.invoke({"user_role": "高校学生"})
 
-# 8. 输出
+# 9. 输出
 print("原始学习建议：")
 print(result["original_advice"])
 print("\n精简后学习建议：")
@@ -348,7 +351,7 @@ AI时代，学习建议：掌握基础数学与编程，动手实践项目；保
 
 对比LangChain案例：这个案例的核心是“流程管控”——我们明确定义了“生成→精简”的顺序，并且用状态存储了中间结果，这就是LangGraph处理多步骤任务的优势。
 
-## 1.5 本章小节
+## 1.5 本章小结
 
 1. 核心认知：LangChain是“基础工具包”（快速搭简单应用），LangGraph是“架构框架”（管控复杂流程），两者互补融合；
 2. 实操重点：开发环境搭建（虚拟环境+依赖+API密钥）是后续所有学习的基础，必须跑通；
