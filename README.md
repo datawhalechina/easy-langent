@@ -66,6 +66,7 @@
 | <strong>相关agent项目 |  |  |
 | [狼人杀（上帝视角）](./project/werewolfGameAi/README.md) | 基于langgraph开发 | ✅    |
 | [智能知识库问答](./project/AgenticRag/README.md) | 基于langchain开发 | ✅    |
+| [MCPChat](./project/MCPChat/README.md) | 基于langchain开发 | ✅    |
 
 
 

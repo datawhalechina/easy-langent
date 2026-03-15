@@ -1,0 +1,34 @@
+[
+    {
+      "name": "time",
+      "category": "Utility",
+      "description": "提供精确的当前时间查询和时区转换。",
+      "type": "stdio",
+      "default_config": {
+        "command": "python",
+        "args": ["-m", "mcp_server_time"]
+      }
+    },
+    {
+      "name": "sqlite",
+      "category": "Database",
+      "description": "本地 SQLite 数据库查询工具。支持查看表结构和执行 SQL。",
+      "type": "stdio",
+      "default_config": {
+        "command": "python",
+        "args": ["-m", "mcp_server_sqlite", "--db-path", "C:/test.db"]
+      }
+    },
+    {
+      "name": "amap-maps",
+      "category": "Geo/Travel",
+      "description": "高德地图官方 MCP。提供地点搜索、路径规划、天气查询。",
+      "type": "sse",
+      "default_config": {
+        "url": "https://dashscope.aliyuncs.com/api/v1/mcps/amap-maps/sse",
+        "headers": {
+          "Authorization": "Bearer sk-4b856e8b34......"
+        }
+      }
+    }
+  ]

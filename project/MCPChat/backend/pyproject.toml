@@ -1,0 +1,43 @@
+[project]
+name = "mcp-agent-backend"
+version = "4.0.0"
+description = "基于 LangChain 和 MCP 的智能 AI Agent 后端服务"
+readme = "../README.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "MCP Agent Team" }
+]
+dependencies = [
+    "langchain>=1.0.0",
+    "langchain-core",
+    "langchain-community",
+    "langgraph",
+    "langchain-deepseek",
+    "mcp",
+    "langchain-mcp-adapters",
+    "mcp-server-time",
+    "mcp-server-sqlite",
+    "langchain-tavily",
+    "fastapi",
+    "uvicorn",
+    "pydantic",
+    "python-dotenv",
+    "requests>=2.32.0",
+    "urllib3<3.0.0",
+    "nest_asyncio",
+    "chardet<6.0.0",
+    "charset_normalizer<4.0.0",
+]
+
+[tool.uv]
+python-preference = "only-managed"
+
+[tool.black]
+line-length = 100
+target-version = ['py310']
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
