@@ -11,7 +11,7 @@
 
 - 确保上一章搭建的开发环境能正常使用；如果之前的虚拟环境关闭了，记得重新激活（选择任意一种激活即可）
 
-```python
+```bash
 # Windows（cmd）
 langent-env\Scripts\activate
 # Windows（PowerShell）
@@ -30,6 +30,7 @@ conda activate langent-env
 
 ```
 API_KEY=XXXXXXXXX
+BASE_URL=https://api.example.com  # API地址，使用你的模型对应的地址（如DeepSeek: https://api.deepseek.com）
 ```
 
 做好这些准备，我们就出发吧！
@@ -72,7 +73,7 @@ import os
 load_dotenv()
 
 API_KEY = os.getenv("API_KEY")
-BASE_URL = "https://api.deepseek.com"
+BASE_URL = os.getenv("BASE_URL")  # 从环境变量读取，未配置时默认为None（使用OpenAI官方地址）
 
 if not API_KEY:
     raise ValueError("未检测到 API_KEY，请检查 .env 文件是否配置正确")
@@ -238,7 +239,7 @@ pipe = pipeline(
     model=model,
     tokenizer=tokenizer,
     max_new_tokens=200,
-    temperature=0.6
+    temperature=0.3
 )
 
 # 3. 初始化LangChain的LLM接口（统一接口）
@@ -281,7 +282,7 @@ import os
 
 load_dotenv()
 API_KEY = os.getenv("API_KEY")
-BASE_URL = "https://api.deepseek.com"
+BASE_URL = os.getenv("BASE_URL")  # 从环境变量读取，未配置时默认为None（使用OpenAI官方地址）
 
 if not API_KEY:
     raise ValueError("未检测到 API_KEY，请检查 .env 文件是否配置正确")
@@ -359,7 +360,7 @@ import os
 
 load_dotenv()
 API_KEY = os.getenv("API_KEY")
-BASE_URL = "https://api.deepseek.com"
+BASE_URL = os.getenv("BASE_URL")  # 从环境变量读取，未配置时默认为None（使用OpenAI官方地址）
 
 if not API_KEY:
     raise ValueError("未检测到 API_KEY，请检查 .env 文件是否配置正确")
@@ -486,7 +487,7 @@ from typing import Dict, List
 # 1. 环境初始化（工程化标准操作：环境变量管理密钥）
 load_dotenv()
 API_KEY = os.getenv("API_KEY")
-BASE_URL = "https://api.deepseek.com"
+BASE_URL = os.getenv("BASE_URL")  # 从环境变量读取，未配置时默认为None（使用OpenAI官方地址）
 
 if not API_KEY:
     raise ValueError("未检测到 API_KEY，请检查 .env 文件是否配置正确")
@@ -501,7 +502,16 @@ chat_model = ChatOpenAI(
 
 # 2. 工程化示例管理：从JSON文件加载示例（避免硬编码，便于维护）
 with open("learning_method_examples.json", "r", encoding="utf-8") as f:
-    examples = json.load(f)
+    data = json.load(f)
+    examples = data["subject_examples"]  # 从JSON中提取示例数据
+# 示例文件格式参考（learning_method_examples.json）：
+# [
+#   {"subject": "Python编程（入门）", "difficulty": "easy", "method": "核心目标：掌握基础语法；学习步骤：1.变量与数据类型 2.条件语句；注意事项：边学边练"},
+#   {"subject": "Python编程（进阶）", "difficulty": "hard", "method": "核心目标：掌握面向对象与库开发；学习步骤：1.类与对象 2.模块开发；注意事项：参与开源项目"},
+#   {"subject": "机器学习（入门）", "difficulty": "easy", "method": "核心目标：理解基础概念；学习步骤：1.数据预处理 2.简单模型；注意事项：用Excel辅助理解"},
+#   {"subject": "机器学习（进阶）", "difficulty": "hard", "method": "核心目标：掌握模型优化；学习步骤：1.特征工程 2.超参数调优；注意事项：研读论文复现实验"}
+# ]
+
 
 # 3. ExampleSelector：按长度筛选示例
 example_selector = LengthBasedExampleSelector(
@@ -529,6 +539,9 @@ class DifficultyExampleSelector(BaseExampleSelector):
 
         # 过滤出匹配难度的所有示例
         return [ex for ex in self.examples if ex.get("difficulty") == target_difficulty]
+
+
+example_selector = DifficultyExampleSelector(examples=examples)
 
 
 # 5. 构建工程化少样本模板
@@ -621,7 +634,9 @@ StrOutputParser 的核心作用**不是清洗文本格式**，也不会主动去
 - 让模型输出可以直接参与后续字符串处理、条件判断或二次解析
 - 作为更复杂解析流程（如 JSON 解析、规则解析）的**底座组件**
 
-在 LangChain 1.0.0 以后，StrOutputParser 是**兼容性最好、稳定性最高、使用成本最低**的输出解析方案，适合作为所有复杂系统的起点。
+在 LangChain 1.0.0 以后, StrOutputParser 是**兼容性最好、稳定性最高、使用成本最低**的输出解析方案,适合作为所有复杂系统的起点。
+
+> **⚠️ 温馨提示**：在 LangChain 新版本（v0.3.x+）中, `StrOutputParser` 的解析结果可能是一个 `TextAccessor` 类型,虽然它的 `print` 时和字符串一样,但 `type()` 检查会显示其真实类型。不过这不影响其作为字符串的后续使用,支持字符串切片、拼接等操作。
 
 ```python
 from langchain_openai import ChatOpenAI
@@ -632,7 +647,7 @@ import os
 # 1. 环境初始化
 load_dotenv()
 API_KEY = os.getenv("API_KEY")
-BASE_URL = "https://api.deepseek.com"
+BASE_URL = os.getenv("BASE_URL")  # 从环境变量读取，未配置时默认为None（使用OpenAI官方地址）
 
 # 2. 初始化模型（无需支持原生结构化输出）
 llm = ChatOpenAI(
@@ -670,7 +685,7 @@ import os
 # 1. 环境与模型初始化（省略，同方案1）
 load_dotenv()
 API_KEY = os.getenv("API_KEY")
-BASE_URL = "https://api.deepseek.com"
+BASE_URL = os.getenv("BASE_URL")  # 从环境变量读取，未配置时默认为None（使用OpenAI官方地址）
 llm = ChatOpenAI(
     api_key=API_KEY,
     base_url=BASE_URL,
@@ -722,7 +737,7 @@ import os
 # 1. 环境与模型初始化
 load_dotenv()
 API_KEY = os.getenv("API_KEY")
-BASE_URL = "https://api.deepseek.com"
+BASE_URL = os.getenv("BASE_URL")  # 从环境变量读取，未配置时默认为None（使用OpenAI官方地址）
 
 llm = ChatOpenAI(
     api_key=API_KEY,
@@ -742,15 +757,15 @@ parser = PydanticOutputParser(pydantic_object=ToolInfo)
 
 # 4. Prompt + Chain
 prompt = PromptTemplate(
-    template="请介绍1个 LangChain 开发工具，严格按照要求输出。\n{format_instructions}",
-    input_variables=[],
+    template="{user_input}，严格按照要求输出。\n{format_instructions}",
+    input_variables=["user_input"],
     partial_variables={
         "format_instructions": parser.get_format_instructions()
     }
 )
 
 chain = prompt | llm | parser
-result = chain.invoke({})
+result = chain.invoke({"user_input": "请介绍1个 Python 开发工具"})
 
 print("解析后的结构化数据（Pydantic 模型对象）：")
 print(result)
@@ -804,7 +819,7 @@ import os
 # 环境初始化
 load_dotenv()
 API_KEY = os.getenv("API_KEY")
-BASE_URL = "https://api.deepseek.com"
+BASE_URL = os.getenv("BASE_URL")  # 从环境变量读取，未配置时默认为None（使用OpenAI官方地址）
 llm = ChatOpenAI(
     api_key=API_KEY,
     base_url=BASE_URL,
@@ -853,7 +868,7 @@ print("解析结果类型：", type(result))
 解析结果类型： <class 'dict'>
 ```
 
-## 2.4 输入 - 输出控制层核心总结
+## 2.4 核心组件总结
 
 输入控制层的核心目标是实现“输入可控制、输出可预期”，关键组件的核心价值：
 
@@ -874,6 +889,6 @@ print("解析结果类型：", type(result))
 ## 2.6 本章练习
 
 1. 复现本章核心案例：包括模型调用、提示词模板、输出解析等，确保所有案例均可成功运行并输出预期结果。
-2. 修改提示词模板与解析器：基于“学习建议生成”案例，在PromptTemplate中新增“难度等级”动态参数，重新运行并验证输入参数与输出结构的匹配性。
-4. 综合选型思考：若开发一个“结构化报告生成工具”（需固定提示格式、输出结构化数据，但无需多轮流程），需组合本章哪些核心组件？说明理由。
+2. 修改提示词模板与解析器：基于"学习建议生成"案例，在PromptTemplate中新增"难度等级"动态参数，重新运行并验证输入参数与输出结构的匹配性。
+3. 综合选型思考：若开发一个"结构化报告生成工具"（需固定提示格式、输出结构化数据，但无需多轮流程），需组合本章哪些核心组件？说明理由。
 
