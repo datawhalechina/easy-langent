@@ -1,0 +1,26 @@
+{
+    "name": "AI Data Analysis SPA",
+    "version": "0.1.0",
+    "private": true,
+    "dependencies": {
+        "@radix-ui/react-select": "^2.1.6",
+        "@radix-ui/react-scroll-area": "^1.2.3",
+        "@radix-ui/react-slot": "^1.1.2",
+        "class-variance-authority": "^0.7.1",
+        "clsx": "*",
+        "lucide-react": "^0.487.0",
+        "react": "^18.3.1",
+        "react-dom": "^18.3.1",
+        "recharts": "^2.15.2",
+        "tailwind-merge": "*"
+    },
+    "devDependencies": {
+        "@types/node": "^20.10.0",
+        "@vitejs/plugin-react-swc": "^3.10.2",
+        "vite": "6.3.5"
+    },
+    "scripts": {
+        "dev": "vite",
+        "build": "vite build"
+    }
+}
