@@ -191,7 +191,7 @@ import os
 load_dotenv()
 llm = ChatOpenAI(
     api_key=os.getenv("API_KEY"),
-    base_url="https://api.deepseek.com/v1",
+    base_url="https://api.deepseek.com",
     model="deepseek-chat",
     temperature=0.3
 )
@@ -312,7 +312,7 @@ import os
 load_dotenv()
 llm = ChatOpenAI(
     api_key=os.getenv("API_KEY"),
-    base_url="https://api.deepseek.com/v1",
+    base_url="https://api.deepseek.com",
     model="deepseek-chat",
     temperature=0.3
 )
@@ -493,7 +493,7 @@ from dotenv import load_dotenv
 load_dotenv()
 llm = ChatOpenAI(
     api_key=os.getenv("API_KEY"),
-    base_url="https://api.deepseek.com/v1",
+    base_url="https://api.deepseek.com",
     model="deepseek-chat",
     temperature=0.3
 )
@@ -542,9 +542,19 @@ except Exception as e:
 ```python
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.exceptions import MissingInputError, OutputParserException
+from langchain_core.exceptions import OutputParserException
 from langchain_core.runnables import Runnable
+import os
+from langchain_openai import ChatOpenAI
+from dotenv import load_dotenv
 
+load_dotenv()
+llm = ChatOpenAI(
+    api_key=os.getenv("API_KEY"),
+    base_url="https://api.deepseek.com",
+    model="deepseek-chat",
+    temperature=0.3
+)
 # 1️⃣ 定义多变量 Prompt 链（营销话术生成示例）
 marketing_prompt = ChatPromptTemplate.from_messages([
     ("system", "根据产品卖点和目标人群，撰写一句营销话术。"),
@@ -564,11 +574,13 @@ try:
     result = marketing_chain.invoke(inputs)
     print("营销话术：", result)
 
-except MissingInputError as e:
-    # ✅ 官方推荐：精准提示缺失变量
-    missing_keys = ", ".join(e.missing_keys)
-    print(f"错误提示：缺少必要输入变量 [{missing_keys}]，请检查输入数据。")
-
+except ValueError as e:
+    # 解析异常信息，提取缺失的变量名
+    if "Missing required variables" in str(e):
+        missing_vars = str(e).split("Missing required variables: ")[-1].strip("[]'")
+        print(f"错误提示：缺少必要输入变量 [{missing_vars}]，请检查输入数据。")
+    else:
+        print(f"输入参数错误：{e}")
 except OutputParserException as e:
     # ✅ 官方推荐：逻辑解析错误不重试
     print(f"解析失败：{e}，请确认 Prompt 与输出格式匹配。")
@@ -585,18 +597,29 @@ except Exception as e:
 
 **3. 分支降级（错误时切换备用方案）**
 
-核心链失败时，使用`RunnableWithFallback`自动切换到备用链（如小模型、预设模板），保证系统可用性。相比旧版自定义函数，新版写法更简洁、可复用。
+核心链失败时，使用`RunnableWithFallbacks`自动切换到备用链（如小模型、预设模板），保证系统可用性。相比旧版自定义函数，新版写法更简洁、可复用。
 
 ```python
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnableWithFallback
+from langchain_core.runnables import RunnableWithFallbacks 
 from langchain_openai import ChatOpenAI
 from langchain_core.exceptions import OutputParserException
-import time
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# 🔑 使用 OpenAI 的 API 密钥（从环境变量读取）
+api_key = os.getenv("OPENAI_API_KEY")   # 在 .env 中设置 OPENAI_API_KEY=sk-xxxxx
+# 注意：不需要指定 base_url，默认就是 https://api.openai.com
 
 # 1️⃣ 核心链（性能高但可能不稳定）
-core_llm = ChatOpenAI(api_key=api_key, model_name="gpt-4", temperature=0.7)
+core_llm = ChatOpenAI(
+    api_key=api_key,
+    model="gpt-4",              
+    temperature=0.7
+)
 core_prompt = ChatPromptTemplate.from_messages([
     ("system", "用专业语言详细解答用户问题。"),
     ("human", "{query}")
@@ -604,7 +627,11 @@ core_prompt = ChatPromptTemplate.from_messages([
 core_chain = core_prompt | core_llm | StrOutputParser()
 
 # 2️⃣ 降级链（稳定但精度略低）
-fallback_llm = ChatOpenAI(api_key=api_key, model_name="gpt-3.5-turbo", temperature=0.5)
+fallback_llm = ChatOpenAI(
+    api_key=api_key,
+    model="gpt-3.5-turbo",
+    temperature=0.5
+)
 fallback_prompt = ChatPromptTemplate.from_messages([
     ("system", "用简洁语言解答用户问题，保证信息准确。"),
     ("human", "{query}")
@@ -612,23 +639,19 @@ fallback_prompt = ChatPromptTemplate.from_messages([
 fallback_chain = fallback_prompt | fallback_llm | StrOutputParser()
 
 # 3️⃣ 构建带降级的链
-chain_with_fallback: RunnableWithFallback = core_chain.with_fallback(
-    fallback=fallback_chain,
-    exceptions=(ConnectionError, TimeoutError),  # ✅ 官方推荐：只捕获临时错误或网络错误
+chain_with_fallback: RunnableWithFallbacks = core_chain.with_fallbacks(
+    fallbacks=[fallback_chain],
+    exceptions_to_handle=(ConnectionError, TimeoutError),# ✅ 官方推荐：只捕获临时错误或网络错误
 )
 
 # 4️⃣ 调用链并捕获异常
 try:
     result = chain_with_fallback.invoke({"query": "什么是RAG技术？"})
     print("解答：", result)
-
 except OutputParserException as e:
-    # ❌ 解析失败一般不触发降级
-    print(f"解析失败：{e}，请确认 Prompt 与输出格式匹配。")
-
+    print(f"解析失败：{e}")
 except Exception as e:
-    # ❗ 兜底未知异常
-    print(f"最终失败（降级后仍失败）：{e}")
+    print(f"最终失败：{e}")
 
 ```
 
