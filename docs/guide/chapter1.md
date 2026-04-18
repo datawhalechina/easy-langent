@@ -244,20 +244,21 @@ OpenAI版本： 2.31.0
 
 | 服务商                 | 官网                                        |
 | ------------------- | ----------------------------------------- |
-| **DeepSeek**        | <https://platform.deepseek.com/usage>     |
+| **DeepSeek**        | <https://platform.deepseek.com/usage>     | 
 | **通义千问（Qwen）**      | <https://bailian.console.aliyun.com/>     |
-| **ChatGPT（OpenAI）** | <https://chatgpt.com/>                    |
-| **智谱 AI（GLM）**      | <https://bigmodel.cn/>                    |
-| **硅基流动**            | <https://cloud.siliconflow.cn/> |
+| **ChatGPT（OpenAI）** | <https://chatgpt.com/>                    | 
+| **智谱 AI（GLM）**      | <https://bigmodel.cn/>                    | 
+| **硅基流动**            | <https://cloud.siliconflow.cn/> | 
 
-> 本教程选择的是deepseek官网的api，可以根据个人情况选择不同的底座模型
+> 💡 **提示**：本教程默认使用 DeepSeek，但所有代码都兼容其他 OpenAI 兼容接口的模型。详细的多模型配置说明请参考 **[第2章](chapter2.md)**（见 2.1.4 节）。
+
 
 在项目文件夹（easy-langent）中新建一个文件，**命名为".env"**（注意前面有个点），或者直接复制根目录下的 `.env.example` 模板文件，然后修改文件名为 `.env`。
 > Tips: windows系统会存在隐藏扩展名的问题，新建`.env`时，需要点击【查看】->【显示】->勾选【文件扩展名】，才能看到隐藏扩展名。
 
 **步骤3.1：编辑.env文件**
 
-用编辑器打开`.env文件`，写入以下内容（替换成你的API密钥）：
+用编辑器打开`.env文件`，根据你的模型提供商写入以下内容（替换成你的API密钥）：
 
 ```env
 API_KEY="YOUR_API_KEY"

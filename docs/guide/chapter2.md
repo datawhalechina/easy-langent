@@ -262,6 +262,53 @@ Hugging Face模型回复：
 
 看到了吧？不管是OpenAI还是Hugging Face的模型，调用逻辑都是“初始化模型→构造输入→invoke()调用→输出结果”，这就是统一接口的好处。后续开发中，你可以根据项目需求（比如成本、隐私要求）灵活切换模型，不用大幅修改代码。
 
+#### （4）快速切换其他主流服务商
+
+得益于 LangChain 的统一接口设计，切换到其他主流服务商非常简单，只需要修改 `.env` 文件中的配置，然后在代码中修改 `model` 参数即可。
+
+##### ① 通义千问（Qwen）
+
+在 `.env` 文件中配置：
+```env
+API_KEY="YOUR_API_KEY"
+BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"
+MODEL="qwen-plus"
+```
+
+然后在代码中修改 `model` 参数：
+```python
+llm = ChatOpenAI(
+    api_key=API_KEY,
+    base_url=BASE_URL,
+    model="qwen-plus",  # 改为 qwen-plus
+    temperature=0.3
+)
+```
+
+##### ② 智谱 AI（GLM）
+
+在 `.env` 文件中配置：
+```env
+API_KEY="YOUR_API_KEY"
+BASE_URL="https://open.bigmodel.cn/api/paas/v4"
+MODEL="glm-4"
+```
+
+然后在代码中修改 `model` 参数：
+```python
+llm = ChatOpenAI(
+    api_key=API_KEY,
+    base_url=BASE_URL,
+    model="glm-4",  # 改为 glm-4
+    temperature=0.3
+)
+```
+
+> 💡 **提示**：所有 OpenAI 兼容接口的服务商都遵循相同的调用方式，只需修改 `.env` 配置和 `model` 参数即可。
+>
+> **已验证兼容的服务商**：DeepSeek、通义千问（Qwen）、智谱 AI（GLM）。
+
+
 ## 2.2 提示词模板（PromptTemplate）：让提示更规范、可复用
 
 为什么需要提示词模板？比如你想做一个“学习建议生成器”，需要给不同角色（高校学生、程序员、职场人）生成建议。如果每次都写完整的提示词，不仅麻烦，还容易出错（比如漏写关键信息）。
