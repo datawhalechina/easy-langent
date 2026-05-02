@@ -70,6 +70,7 @@
 | [数据处理智能体](./project/DataAgent/README.md)          | 基于langchain开发 | jspi-fu |
 | [医疗RAG诊断](./project/MedicalRag/README.md)            | 基于langchain开发  |道法自然|
 | [个人助手](./project/PersonalMemoryAssistant/README.md)  | 基于langchain开发  |念安|
+| [哈尔滨冰雪大世界舆情分析](./project/HarbinIceSnowOpinionDecision/README.md)  | 基于langgraph开发  |tian09150714|
 
 ## ✨核心贡献者
 - [牧小熊-项目负责人](https://github.com/muxiaoxiong)(Datawhale成员)
