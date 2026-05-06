@@ -53,7 +53,7 @@ class DebateState(TypedDict):
 def generate_topic(state: DebateState) -> DebateState:
     """生成辩题"""
     print(f"\n{'=' * 50}")
-    print("📜 生成辩题")
+    print("✨ 生成辩题")
     print(f"{'=' * 50}\n")
     prompt = ChatPromptTemplate([
         ("system", """你是辩论赛出题人。根据用户给出的主题，生成一个具有可辩性的辩题，并按以下格式输出：
@@ -81,7 +81,7 @@ def generate_topic(state: DebateState) -> DebateState:
 def assign_roles(state: DebateState) -> DebateState:
     """分配正方/反方"""
     print(f"\n{'=' * 50}")
-    print("📜 角色分配")
+    print("🎭 角色分配")
     print(f"{'=' * 50}\n")
     agents = ["agent1", "agent2", "agent3", "agent4"]
     affirmative = choices(agents, k=2)  # 抽2名正方，2名反方
@@ -98,7 +98,7 @@ def assign_roles(state: DebateState) -> DebateState:
 def opening_statement(state: DebateState) -> DebateState:
     """开篇陈词"""
     print(f"\n{'=' * 50}")
-    print("📜 开篇陈词")
+    print("📝 开篇陈词")
     print(f"{'=' * 50}\n")
     prompt = ChatPromptTemplate([
         ("system",
@@ -118,7 +118,7 @@ def opening_statement(state: DebateState) -> DebateState:
 def debate_round1(state: DebateState) -> DebateState:
     """第1轮自由辩论"""
     print(f"\n{'=' * 50}")
-    print("📜 第1轮自由辩论")
+    print("💬 第1轮自由辩论")
     print(f"{'=' * 50}\n")
     prompt = ChatPromptTemplate([
         ("system",
@@ -139,7 +139,7 @@ def debate_round1(state: DebateState) -> DebateState:
 def debate_round2(state: DebateState) -> DebateState:
     """第2轮自由辩论"""
     print(f"\n{'=' * 50}")
-    print("📜 第2轮自由辩论")
+    print("💬 第2轮自由辩论")
     print(f"{'=' * 50}\n")
     prompt = ChatPromptTemplate([
         ("system",
@@ -160,7 +160,7 @@ def debate_round2(state: DebateState) -> DebateState:
 def closing_statement(state: DebateState) -> DebateState:
     """总结陈词"""
     print(f"\n{'=' * 50}")
-    print("📝 总结陈词阶段")
+    print("📋 总结陈词")
     print(f"{'=' * 50}\n")
 
     # 选正反方代表
@@ -235,7 +235,7 @@ def closing_statement(state: DebateState) -> DebateState:
 
 def judge_result(state: DebateState) -> DebateState:
     print(f"\n{'=' * 50}")
-    print("📜 裁判评判")
+    print("⚖️ 裁判评判")
     print(f"{'=' * 50}\n")
 
     # 1. 收集辩论全程记录
@@ -301,7 +301,6 @@ def judge_result(state: DebateState) -> DebateState:
         reason = result_dict["reason"]
         scores = result_dict.get("breakdown", {})
 
-        # 打印评判详情
         print("📊 评分详情：")
         for dimension, scores_dict in scores.items():
             print(f"  {dimension}：正方 {scores_dict['正方']}分 | 反方 {scores_dict['反方']}分")
@@ -328,7 +327,7 @@ def judge_result(state: DebateState) -> DebateState:
 
         state["judge_result"] = {"winner": winner, "reason": "自动评判"}
         state["winner"] = winner
-        print(f"🏆 获胜方：{winner}")
+        print(f"\n🏆 获胜方：{winner}")
 
     return state
 
