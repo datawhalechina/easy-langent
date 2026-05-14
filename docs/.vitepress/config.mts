@@ -14,6 +14,15 @@ export default defineConfig({
   lang: 'zh-CN',
   base: baseConfig,
   lastUpdated: true,
+  markdown: {
+    theme: {
+      light: 'vitesse-light',
+      dark: 'vitesse-dark'
+    },
+    languageAlias: {
+      env: 'dotenv'
+    }
+  },
   themeConfig: {
     // https://vitepress.dev/reference/default-theme-config
     nav: [
