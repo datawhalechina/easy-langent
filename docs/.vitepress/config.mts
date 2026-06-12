@@ -27,7 +27,8 @@ export default defineConfig({
     // https://vitepress.dev/reference/default-theme-config
     nav: [
       { text: '首页', link: '/' },
-      { text: '开始学习', link: '/guide/前言' }
+      { text: '开始学习', link: '/guide/前言' },
+      { text: '实战项目', link: '/projects' }
     ],
 
     sidebar: [

@@ -21,5 +21,8 @@ features:
     details: 每一章都配套针对性的实操任务，确保在学习过程中能够动手实践
   - title: 综合实战
     details: 多智能体协作与系统优化，最终完成综合实战项目
+  - title: 实战项目
+    details: 汇总课程优秀智能体 Agent 项目，包含 LangChain 与 LangGraph 实战案例
+    link: /projects
+    linkText: 查看项目合集
 ---
-
