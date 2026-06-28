@@ -888,8 +888,12 @@ llm = ChatOpenAI(
 **完整代码实现**
 
 ```python
-# ================== 基础依赖 ==================
-from typing import TypedDict, NotRequired
+from typing import TypedDict
+# 兼容低版本 Python 的 NotRequired 导入
+try:
+    from typing import NotRequired
+except ImportError:
+    from typing_extensions import NotRequired
 from langgraph.graph import StateGraph, START, END
 from langchain_core.prompts import PromptTemplate
 from langgraph.checkpoint.memory import MemorySaver
@@ -902,12 +906,17 @@ from langchain_openai import ChatOpenAI
 # 加载环境变量
 load_dotenv()
 
+# 提前校验 API Key，避免运行时报错模糊
+api_key = os.getenv("API_KEY")
+if not api_key:
+    raise ValueError("未在环境变量中检测到 API_KEY，请检查 .env 文件配置")
+
 # 初始化真实 LLM
 llm = ChatOpenAI(
-    api_key=os.getenv("API_KEY"),
-    base_url="https://api.deepseek.com",
-    model="deepseek-chat",
-    temperature=0.3
+    api_key=api_key,
+    base_url="https://api.deepseek.com/",
+    model="deepseek-v4-flash",
+    temperature=0.6
 )
 
 # ==========================================================
@@ -929,20 +938,28 @@ class TextProcessState(TypedDict):
 # 2. 定义节点函数（每个节点 = 一个处理模块）
 # ==========================================================
 def deduplicate_node(state: TextProcessState) -> TextProcessState:
-    """文本去重节点"""
+    """文本去重节点：去除内容完全一致（忽略首尾空格）的重复行，丢弃纯空白行"""
     raw_text = state["raw_text"]
     lines = raw_text.split("\n")
     unique_lines = []
     seen = set()
+    
     for line in lines:
         line_stripped = line.strip()
+        # 过滤纯空白行，且未出现过该文本
         if line_stripped and line_stripped not in seen:
             seen.add(line_stripped)
             unique_lines.append(line)
+    
+    result_text = "\n".join(unique_lines)
     print("✅ 去重节点执行完成")
-    return {"deduplicated_text": "\n".join(unique_lines)}
+    
+    # 复制原有状态，仅更新输出字段
+    new_state = state.copy()
+    new_state["deduplicated_text"] = result_text
+    return new_state
 
-def summary_node(state: TextProcessState) -> TextProcessState:
+def summary_node(state: TextProcessState) -> dict:
     """摘要生成节点（调用LLM）"""
     deduplicated_text = state["deduplicated_text"]
     prompt = PromptTemplate(
@@ -954,7 +971,7 @@ def summary_node(state: TextProcessState) -> TextProcessState:
     print("🤖 摘要节点执行完成")
     return {"summary_text": summary}
 
-def sensitive_check_node(state: TextProcessState) -> TextProcessState:
+def sensitive_check_node(state: TextProcessState) -> dict:
     """敏感词检测节点"""
     summary = state["summary_text"]
     sensitive_words = ["敏感词1", "敏感词2", "违法", "违规"]
@@ -962,7 +979,7 @@ def sensitive_check_node(state: TextProcessState) -> TextProcessState:
     print("🔍 敏感词检测完成：", has_sensitive)
     return {"has_sensitive": has_sensitive}
 
-def output_node(state: TextProcessState) -> TextProcessState:
+def output_node(state: TextProcessState) -> dict:
     """输出节点（根据敏感词结果格式化）"""
     summary = state["summary_text"]
     has_sensitive = state["has_sensitive"]
@@ -1000,7 +1017,7 @@ def build_linear_graph():
     graph_builder.add_edge("sensitive_check", "output")
     graph_builder.add_edge("output", END)
 
-    # 【修改核心】编译时传入MemorySaver，真正启用状态历史
+    # 编译时传入MemorySaver，真正启用状态历史
     # MemorySaver：内存级检查点，适合测试/开发，重启程序后状态丢失
     return graph_builder.compile(checkpointer=MemorySaver())
 
@@ -1021,21 +1038,24 @@ if __name__ == "__main__":
     # thread_id：会话唯一标识，测试用随便命名，多会话用不同id即可
     config = {"configurable": {"thread_id": "text_process_test_001"}}
 
-    # ========== 关键修改2：invoke时传入config ==========
+    # 执行工作流
     final_state = linear_graph.invoke(test_state, config=config)
 
     # 输出最终结果
     print("\n" + "=" * 50)
     print(final_state["final_output"])
 
-    # ========== 关键修改3：get_state_history时也传入同一个config ==========
+    # 查看状态历史
     print("\n" + "=" * 50)
-    history = list(linear_graph.get_state_history(config))   # 必须传config
-    print("状态快照数量（超步骤）：", len(history))
+    history = list(linear_graph.get_state_history(config))
+    print("状态快照数量：", len(history))
+    print("提示：get_state_history 默认按时间倒序返回，最新状态排在最前\n")
 
-    for i, state in enumerate(history, 1):
-        print(f"\n第{i}步：")
-        print("state", state)
+    for i, snapshot in enumerate(history, 1):
+        print(f"第{i}步快照：")
+        print("状态数据：", snapshot.values)  
+        print("下一节点：", snapshot.next)   
+        print("-" * 30)
     
 ```
 
