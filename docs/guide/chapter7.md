@@ -1018,7 +1018,7 @@ load_dotenv()
 llm = ChatOpenAI(
     api_key=os.getenv("API_KEY"),
     base_url="https://api.deepseek.com",
-    model="deepseek-chat",
+    model="deepseek-v4-flash",
     temperature=0.3  # 低温度保证输出固定，方便学生观察
 )
 output_parser = StrOutputParser()  # 统一解析为字符串，避免报错
@@ -1189,11 +1189,11 @@ if __name__ == "__main__":
 🔍 子图执行 - 检查作业完成度
 🔍 子图执行 - 检查作业正确率
 🔍 子图执行 - 计算作业得分
-✅ 主图接收子图批改结果：完成度完成，正确率正确率75%，得分78
+✅ 主图接收子图批改结果：完成度完成，正确率正确率100%，得分100
 
 📝 主图执行 - 生成学生批改反馈
 
-🎉 最终结果 - 学生反馈：这次作业完成得很认真，但要注意检查计算过程哦，争取下次全对！
+🎉 最终结果 - 学生反馈：太棒啦，全部正确！老师为你点赞，你的计算能力越来越强了，继续保持哦～ 🌟
 
 ============ 测试2：不合格作业（未完成+正确率低） ============================================================    
 
@@ -1203,11 +1203,11 @@ if __name__ == "__main__":
 🔍 子图执行 - 检查作业完成度
 🔍 子图执行 - 检查作业正确率
 🔍 子图执行 - 计算作业得分
-✅ 主图接收子图批改结果：完成度未完成，正确率正确率33%，得分0
+✅ 主图接收子图批改结果：完成度未完成，正确率正确率0%，得分0
 
 📝 主图执行 - 生成学生批改反馈
 
-🎉 最终结果 - 学生反馈：别灰心，这次作业只完成了一部分。下次记得把题目都做完，老师相信你一定能算对！
+🎉 最终结果 - 学生反馈：小朋友，再仔细想一想哦，2+3等于几呀？下次要记得把题目都做完，老师相信你可以做对的！
 ```
 
 关键说明：
@@ -1230,21 +1230,23 @@ if __name__ == "__main__":
 ```python
 # ================== 导入依赖 ==================
 import os
-from dotenv import load_dotenv
 from typing import TypedDict, Optional
 
-from langgraph.graph import StateGraph, START, END
-from langchain_openai import ChatOpenAI
+from dotenv import load_dotenv
+from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI
+from langgraph.graph import StateGraph, START, END
 
 # ================== 初始化环境变量 & LLM ==================
 load_dotenv()
 llm = ChatOpenAI(
     api_key=os.getenv("API_KEY"),
-    base_url="https://api.deepseek.com",
-    model="deepseek-chat",
-    temperature=0.3
+    base_url=os.getenv("BASE_URL", "https://api.deepseek.com"),
+    model=os.getenv("MODEL", "deepseek-v4-flash"),
+    temperature=0.3,
 )
+output_parser = StrOutputParser()
 
 # ================== 定义状态 ==================
 class CandidateState(TypedDict):
@@ -1257,51 +1259,75 @@ class CandidateState(TypedDict):
     interview_summary: Optional[str]  # 扇出节点输出
     summary: Optional[str]         # 汇总节点输出
 
-# ================== 定义扇出智能体（管道符风格 + 打印） ==================
-def resume_node(state: CandidateState) -> dict:
-    result = (ChatPromptTemplate.from_template(
+# ================== 定义扇出智能体 ==================
+resume_agent = (
+    ChatPromptTemplate.from_template(
         "请阅读以下候选人简历内容，提取关键信息（姓名、学历、工作经历、技能清单）：\n{resume}"
-    ) | llm).invoke(state)
-    print("\n[扇出节点] 简历信息:", result)
-    return {"resume_info": result}
+    )
+    | llm
+    | output_parser
+)
 
-def skill_node(state: CandidateState) -> dict:
-    result = (ChatPromptTemplate.from_template(
-        "根据岗位要求：{job_requirements}，请分析候选人技能匹配情况，并给出匹配分（0-10）：\n候选人技能：{skills}"
-    ) | llm).invoke(state)
-    print("\n[扇出节点] 技能匹配:", result)
-    return {"skill_match": result}
+skill_agent = (
+    ChatPromptTemplate.from_template(
+        "根据岗位要求：{job_requirements}，请分析候选人技能匹配情况，并给出匹配分（0-10）：\n"
+        "候选人技能：{skills}"
+    )
+    | llm
+    | output_parser
+)
 
-def interview_node(state: CandidateState) -> dict:
-    result = (ChatPromptTemplate.from_template(
+interview_agent = (
+    ChatPromptTemplate.from_template(
         "请根据以下面试评价内容，总结候选人的优点和潜在改进点，简明扼要：\n{interview_feedback}"
-    ) | llm).invoke(state)
-    print("\n[扇出节点] 面试总结:", result)
-    return {"interview_summary": result}
+    )
+    | llm
+    | output_parser
+)
 
-# ================== 定义扇入汇总节点 ==================
-def summary_node(state: CandidateState) -> CandidateState:
-    prompt = (ChatPromptTemplate.from_template(
+summary_agent = (
+    ChatPromptTemplate.from_template(
         "请整合以下候选人信息，生成一份完整的招聘推荐报告（150字以内）：\n"
         "简历关键信息：{resume_info}\n"
         "技能匹配分析：{skill_match}\n"
         "面试总结：{interview_summary}"
-    ) | llm)
+    )
+    | llm
+    | output_parser
+)
 
-    result = prompt.invoke({
-        "resume_info": state["resume_info"],
-        "skill_match": state["skill_match"],
-        "interview_summary": state["interview_summary"]
+# ================== 定义扇出节点（并行执行） ==================
+def resume_node(state: CandidateState) -> dict:
+    result = resume_agent.invoke({"resume": state["resume"]})
+    print("\n[扇出节点] 简历信息:", result)
+    return {"resume_info": result}
+
+def skill_node(state: CandidateState) -> dict:
+    result = skill_agent.invoke({
+        "job_requirements": state["job_requirements"],
+        "skills": state["skills"],
     })
+    print("\n[扇出节点] 技能匹配:", result)
+    return {"skill_match": result}
 
+def interview_node(state: CandidateState) -> dict:
+    result = interview_agent.invoke({"interview_feedback": state["interview_feedback"]})
+    print("\n[扇出节点] 面试总结:", result)
+    return {"interview_summary": result}
+
+# ================== 定义扇入汇总节点 ==================
+def summary_node(state: CandidateState) -> dict:
+    result = summary_agent.invoke({
+        "resume_info": state["resume_info"] or "未提取到简历信息",
+        "skill_match": state["skill_match"] or "未分析技能匹配",
+        "interview_summary": state["interview_summary"] or "未生成面试总结",
+    })
     print("\n[汇总节点] 招聘推荐报告:", result)
-    state["summary"] = result
-    return state
+    return {"summary": result}
 
 # ================== 构建图 ==================
-graph = StateGraph(state_schema=CandidateState)
+graph = StateGraph(CandidateState)
 
-graph.add_node("start", lambda state: state)
 graph.add_node("resume_info", resume_node)
 graph.add_node("skill_match", skill_node)
 graph.add_node("interview_summary", interview_node)
@@ -1312,10 +1338,8 @@ graph.add_edge(START, "resume_info")
 graph.add_edge(START, "skill_match")
 graph.add_edge(START, "interview_summary")
 
-# 扇入
-graph.add_edge("resume_info", "summary")
-graph.add_edge("skill_match", "summary")
-graph.add_edge("interview_summary", "summary")
+# 扇入：等待三个扇出节点都完成后，再执行汇总节点
+graph.add_edge(["resume_info", "skill_match", "interview_summary"], "summary")
 
 # 汇总节点到结束
 graph.add_edge("summary", END)
@@ -1337,27 +1361,29 @@ input_state = CandidateState(
 result = app.invoke(input_state)
 
 print("\n=== 最终招聘推荐报告 ===")
-print(result["summary"].content)
+print(result["summary"])
 
 ```
 
-运行结果
+运行结果示例（并行节点的输出顺序可能略有不同）
 
 ```
-[扇出节点] 面试总结: content='**优点：**\n- 表达清晰，逻辑性强\n\n**潜在改进点：**\n- 团队管理经验有待加强' additional_kwargs={'refusal': None} response_metadata={'token_usage': {'completion_tokens': 25, 'prompt_tokens': 38, 'total_tokens': 63, 'completion_tokens_details': None, 'prompt_tokens_details': {'audio_tokens': None, 'cached_tokens': 0}, 'prompt_cache_hit_tokens': 0, 'prompt_cache_miss_tokens': 38}, 'model_provider': 'openai', 'model_name': 'deepseek-chat', 'system_fingerprint': 'fp_eaab8d114b_prod0820_fp8_kvcache', 'id': '4a71df6a-6980-438c-a856-0ec850d86074', 'finish_reason': 'stop', 'logprobs': None} id='lc_run--019c0e24-0fcc-7042-9bc8-37c549344ad3-0' tool_calls=[] invalid_tool_calls=[] usage_metadata={'input_tokens': 38, 'output_tokens': 25, 'total_tokens': 63, 'input_token_details': {'cache_read': 0}, 'output_token_details': {}}
+[扇出节点] 简历信息: - **姓名**：张三  
+- **学历**：硕士  
+- **工作经历**：5年软件开发经验  
+- **技能清单**：Python、Java、SQL
 
-[扇出节点] 简历信息: content='**姓名：** 张三  \n**学历：** 硕士  \n**工作经历：** 5年软件开发经验  \n**技能清单：** Python、Java、SQL' additional_kwargs={'refusal': None} response_metadata={'token_usage': {'completion_tokens': 35, 'prompt_tokens': 43, 'total_tokens': 78, 'completion_tokens_details': None, 'prompt_tokens_details': {'audio_tokens': None, 'cached_tokens': 0}, 'prompt_cache_hit_tokens': 0, 'prompt_cache_miss_tokens': 43}, 'model_provider': 'openai', 'model_name': 'deepseek-chat', 'system_fingerprint': 'fp_eaab8d114b_prod0820_fp8_kvcache', 'id': 'a77bdb3a-39ca-4edd-9ed9-13ebcc153c0b', 'finish_reason': 'stop', 'logprobs': None} id='lc_run--019c0e24-0fd0-7451-bb31-8b9de6ab8ccf-0' tool_calls=[] invalid_tool_calls=[] usage_metadata={'input_tokens': 43, 'output_tokens': 35, 'total_tokens': 78, 'input_token_details': {'cache_read': 0}, 'output_token_details': {}}
+[扇出节点] 面试总结: **优点：** 表达清晰、逻辑性强。  
+**潜在改进点：** 团队管理经验不足。
 
-[扇出节点] 技能匹配: content='根据您提供的岗位要求和候选人技能，我们来逐一分析匹配情况：  \n\n**1. 岗位要求与候选人技能对比**  \n- **熟悉Python**：候选人具备 Python 技能 ✅  \n- **数据分析**：候选人明确列出“数据分析”技能 ✅  \n- **团队协作能力**：岗位要求中提及，但候选人技能列表未明确体现（技能列表通常只列技术能力，团队协 作可能在其他部分说明）❓  \n\n**2. 匹配度分析**  \n- 候选人具备 Python 和数据分析，这两项核心要求都符合。  \n- 候选人还额外掌握 Java 和 SQL，SQL 对数据分析岗位很 有帮助，属于加分项。  \n- 团队协作能力未在技能列表中体现，但通常可以在简历的其他部分（如项目经历、工作经历）中判断，此处仅凭技能列表无法确认，因此暂时视为“未知”，不扣分但也不额外加分。  \n\n**3. 匹配分计算（0-10）**  \n- 核心要求（Python、数据分析）完全匹配 → 基础分 8/10  \n- 额外相关技能（SQL）加强数据分析能力 → +0.5  \n- Java 对岗位不一定直接必要，但体现编程广度 → +0.5  \n- 团队协作能力未在技能中显示，但可能隐含，暂不扣分 → +0  \n- **总分：9/10**  \n\n**4. 建议**  \n建议在面试或 简历筛选中进一步确认候选人的团队协作经验（如项目合作、跨部门沟通等），若具备则匹配度可达 9.5 甚至 10 分。  \n\n**匹配分：9/10**' additional_kwargs={'refusal': None} response_metadata={'token_usage': {'completion_tokens': 352, 'prompt_tokens': 47, 'total_tokens': 399, 'completion_tokens_details': None, 'prompt_tokens_details': {'audio_tokens': None, 'cached_tokens': 0}, 'prompt_cache_hit_tokens': 0, 'prompt_cache_miss_tokens': 47}, 'model_provider': 'openai', 'model_name': 'deepseek-chat', 'system_fingerprint': 'fp_eaab8d114b_prod0820_fp8_kvcache', 'id': '78652027-ebd8-4f62-931c-8372ef8040d5', 'finish_reason': 'stop', 'logprobs': None} id='lc_run--019c0e24-0fd3-7b83-8c83-ea88bce9ea7a-0' tool_calls=[] invalid_tool_calls=[] usage_metadata={'input_tokens': 47, 'output_tokens': 352, 'total_tokens': 399, 'input_token_details': {'cache_read': 0}, 'output_token_details': {}}
+[扇出节点] 技能匹配: 根据岗位要求（Python、数据分析、团队协作能力），候选人技能列表包含Python和数据分析，满足两项核心硬技能，且额外具备Java和SQL等相关技能，进一步增强了数据处理能力。但未明确提及团队协作能力（可能需在面试或其他环节评估），因此匹配度较高但非满分。综合评定匹配分为 **8/10**。
 
-[汇总节点] 招聘推荐报告: content='**招聘推荐报告：张三**\n**基本信息**：硕士学历，5年软件开发经验。\n**技能匹配**：核心技能（Python、数据分析）完全匹配，并掌握Java、SQL等加分项，综合匹配度9/10。\n**面试表现**：表达清晰、逻辑性强，但团队管理经验相对薄弱。\n**综合建议**：技术能力突出，高度匹配岗位核心要求，推荐录用。' additional_kwargs={'refusal': None} response_metadata={'token_usage': {'completion_tokens': 86, 'prompt_tokens': 1341, 'total_tokens': 1427, 'completion_tokens_details': None, 'prompt_tokens_details': {'audio_tokens': None, 'cached_tokens': 192}, 'prompt_cache_hit_tokens': 192, 'prompt_cache_miss_tokens': 1149}, 'model_provider': 'openai', 'model_name': 'deepseek-chat', 'system_fingerprint': 'fp_eaab8d114b_prod0820_fp8_kvcache', 'id': '05cdfdd8-d563-4870-a8fa-db4ea2fc87ca', 'finish_reason': 'stop', 'logprobs': None} id='lc_run--019c0e24-421a-7b71-9e97-94c729642296-0' tool_calls=[] invalid_tool_calls=[] usage_metadata={'input_tokens': 1341, 'output_tokens': 86, 'total_tokens': 1427, 'input_token_details': {'cache_read': 192}, 'output_token_details': {}}
+[汇总节点] 招聘推荐报告: **招聘推荐报告**  
+候选人张三，硕士学历，5年软件开发经验，掌握Python、Java、SQL。技能匹配岗位核心要求（Python、数据分析），得8/10分；Java和SQL增强数据处理能力，但团队协作能力未明确，需面试验证。面试表现：表达清晰、逻辑性强，但团队管理经验不足。综合建议：推荐进入下一轮，重点考察协作及管理潜力。
 
 === 最终招聘推荐报告 ===
-**招聘推荐报告：张三**
-**基本信息**：硕士学历，5年软件开发经验。
-**技能匹配**：核心技能（Python、数据分析）完全匹配，并掌握Java、SQL等加分项，综合匹配度9/10。
-**面试表现**：表达清晰、逻辑性强，但团队管理经验相对薄弱。
-**综合建议**：技术能力突出，高度匹配岗位核心要求，推荐录用。
+**招聘推荐报告**  
+候选人张三，硕士学历，5年软件开发经验，掌握Python、Java、SQL。技能匹配岗位核心要求（Python、数据分析），得8/10分；Java和SQL增强数据处理能力，但团队协作能力未明确，需面试验证。面试表现：表达清晰、逻辑性强，但团队管理经验不足。综合建议：推荐进入下一轮，重点考察协作及管理潜力。
 ```
 
 【学习提示】
@@ -1379,13 +1405,13 @@ START 节点同时连接三个并行节点（扇出）：resume_info、skill_mat
 
 #### 7.2.2.2 实现技巧：如何处理并发状态的合并冲突
 
-刚才的案例中，3个并行智能体的任务是独立的（resume_info`、`skill_match`、`interview_summary互不干扰），但如果多个智能体**同时修改同一个状态参数**，就会出现“冲突”——比如两个智能体同时修改“result”字段，最后只会保留一个结果，这就是并发状态合并冲突。
+刚才的案例中，3个并行智能体的任务是独立的（`resume_info`、`skill_match`、`interview_summary` 互不干扰），但如果多个智能体**同时修改同一个状态参数**，就会出现“冲突”——比如两个智能体同时修改“result”字段，最后只会保留一个结果，这就是并发状态合并冲突。
 
 举个反面例子：两个智能体同时计算“1+1”，都要把结果存入state["calc_result"]，一个返回2，一个返回3（假设出错），最后state里的calc_result只会是最后执行完的那个，导致结果混乱。
 
 **技巧1：给并行节点分配独立的状态键（推荐，最简单）**
 
-核心思路：不让多个并行节点修改同一个状态字段，每个节点对应一个独立的键，比如resume_info节点存到state["resume_info"]，就像刚才的招聘奶昔案例，这样完全不会冲突。
+核心思路：不让多个并行节点修改同一个状态字段，每个节点对应一个独立的键，比如resume_info节点存到state["resume_info"]，就像刚才的招聘案例，这样完全不会冲突。
 
 **技巧2：使用状态合并函数（解决必须修改同一字段的场景）**
 
