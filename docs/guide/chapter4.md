@@ -208,11 +208,12 @@ marketing_prompt = PromptTemplate(
 )
 
 # 3. 多输入多输出线性链（教学标准版）
+
 overall_chain = (
     # Step 1：生成卖点 + 透传原始输入
     RunnableMap({
         "sell_points": sell_point_prompt | llm | (lambda x: x.content),
-        "target_audience": RunnablePassthrough(),
+        "target_audience": lambda x: x["target_audience"],
     })
     # Step 2：营销话术生成
     | marketing_prompt
