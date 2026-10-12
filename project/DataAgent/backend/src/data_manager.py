@@ -108,7 +108,8 @@ def calculate_correlation(col1: str, col2: str):
             else:
                 # 如果是字符串/类别，使用 factorize 编码 (0, 1, 2...)
                 codes, uniques = pd.factorize(series)
-                return pd.Series(codes)
+                # corr 按索引对齐；保留清理空行后原始数据的行标签。
+                return pd.Series(codes, index=series.index)
 
         # 强制转换为数值序列
         v1 = to_numeric_force(s1)
